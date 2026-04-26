@@ -1,0 +1,56 @@
+# Default training / inference configuration.
+# CLI flags override any field set here.
+
+data:
+  img_size: 384
+  syn_subdir: synthetic        # under data/
+  use_aug: true                # also load <split>_aug/ alongside <split>/
+
+model:
+  name: deeplabv3plus               # gatenet | deeplabv3plus
+  width_factor: 4              # GateNet channel divisor (f=4 → ~U-Net/4 width)
+  encoder_name: resnet34       # used by deeplabv3plus
+  encoder_weights: imagenet        # e.g. imagenet
+  dropout_p: 0.1
+
+loss:
+  deep_supervision_weights: [4, 2, 1, 1, 1]
+  bce_weight: 2.0              # per-scale loss is dice + bce_weight * bce
+
+train:
+  epochs: 50
+  batch_size: 8
+  lr: 3.0e-4  # adamw: 5.0e-3, sgd: 0.02
+  optimizer: adamw
+  sgd_momentum: 0.9
+  weight_decay: 1.0e-4
+  num_workers_train: 16
+  num_workers_val: 16
+  checkpoint_interval: 1000
+  scheduler:
+    type: polynomial_hf
+    warmup_ratio: 0.1
+    power: 0.9
+    lr_end: 1.0e-6  # adamw: 1.0e-6, sgd: 5.0e-4
+  performance:
+    compile: true
+    compile_mode: max-autotune
+    amp: true
+    amp_dtype: bf16
+    channels_last: true
+    cudnn_benchmark: false
+    matmul_precision: high
+    prefetch_factor: 4
+  checkpoint_name: best_gatenet.pth
+
+eval:
+  threshold: 0.5
+
+postprocess:
+  max_dist: 100.0              # px, prior↔candidate gating
+  ransac_threshold: 5.0        # px
+  max_translation: 150.0       # px sanity check on RANSAC affine
+
+augment:
+  outer_corner_scale: 1.4      # outer corner = centroid + scale * (inner - centroid)
+  multiplier: 5                # offline augmented copies per curated sample

@@ -1,0 +1,14 @@
+numpy
+opencv-python
+torch
+torchvision
+kornia
+torchmetrics
+transformers
+segmentation-models-pytorch
+matplotlib
+pandas
+tqdm
+pyyaml
+datasets
+pillow

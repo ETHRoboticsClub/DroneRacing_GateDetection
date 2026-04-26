@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gate-detection"
+version = "0.1.0"
+description = "Two-stage gate detection for autonomous drone racing (GateNet segmentation + QuAdGate corner extraction)."
+requires-python = ">=3.10"
+readme = "README.md"
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = "requirements.txt"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
