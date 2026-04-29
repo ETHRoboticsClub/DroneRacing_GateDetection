@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 
 from gate_detection.config import load_config
+from gate_detection.paths import DATA_ROOT, SAM_ROOT, SYN_ROOT
 from gate_detection.training.trainer import train
 
 
@@ -20,19 +21,23 @@ def main() -> None:
     p.add_argument("--batch-size", type=int, default=None)
     p.add_argument("--lr",         type=float, default=None)
     p.add_argument("--no-aug",     action="store_true",
-                   help="skip train_aug/val_aug, use curated data only")
+                   help="disable online per-batch augmentation")
     args = p.parse_args()
 
     cfg = load_config(args.config)
     sched = cfg["train"]["scheduler"]
     perf = cfg["train"].get("performance", {})
+    use_sam_masks = cfg["data"].get("use_sam_masks", True)
+    data_root = str(SAM_ROOT if use_sam_masks else SYN_ROOT)
 
     train(
         epochs=             args.epochs     if args.epochs is not None     else cfg["train"]["epochs"],
         batch_size=         args.batch_size if args.batch_size is not None else cfg["train"]["batch_size"],
         base_lr=            args.lr         if args.lr is not None         else cfg["train"]["lr"],
-        use_aug=            (not args.no_aug) and cfg["data"]["use_aug"],
+        augment=            not args.no_aug,
         img_size=           cfg["data"]["img_size"],
+        use_sam_masks=      use_sam_masks,
+        data_root=          data_root,
         model_name=         cfg["model"].get("name", "gatenet"),
         width_factor=       cfg["model"]["width_factor"],
         encoder_name=       cfg["model"].get("encoder_name", "resnet34"),
@@ -58,7 +63,6 @@ def main() -> None:
         cudnn_benchmark=    perf.get("cudnn_benchmark", True),
         matmul_precision=   perf.get("matmul_precision", "high"),
         checkpoint_name=    cfg["train"]["checkpoint_name"],
-        checkpoint_interval=cfg["train"].get("checkpoint_interval", 10),
     )
 
 

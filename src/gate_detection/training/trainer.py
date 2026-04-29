@@ -26,7 +26,7 @@ from gate_detection.config import get_device
 from gate_detection.data.dataset import GateDataset
 from gate_detection.losses.segmentation import gate_loss
 from gate_detection.models import ModelConfig, SegmentationModelWrapper, build_model
-from gate_detection.paths import CHECKPOINTS_ROOT, SYN_ROOT
+from gate_detection.paths import CHECKPOINTS_ROOT, SAM_ROOT, SYN_ROOT
 
 
 def _base_model(model: torch.nn.Module) -> torch.nn.Module:
@@ -44,28 +44,24 @@ def _base_model(model: torch.nn.Module) -> torch.nn.Module:
 # Dataloader factory
 # ---------------------------------------------------------------------------
 def build_dataloaders(
-    syn_root: str | os.PathLike = SYN_ROOT,
+    data_root: str | os.PathLike = SAM_ROOT,
     *,
     img_size: int = 384,
     batch_size: int = 16,
-    use_aug: bool = True,
+    augment: bool = True,
+    use_sam_masks: bool = True,
     num_workers_train: int = 12,
     num_workers_val: int = 12,
     prefetch_factor: int = 4,
 ) -> tuple[DataLoader, DataLoader, GateDataset, GateDataset]:
-    """Build train+val loaders from ``<syn_root>/{train,val}[/_aug]``."""
-    syn_root = Path(syn_root)
+    """Build train+val loaders from ``<data_root>/{train,val}``."""
+    data_root = Path(data_root)
 
-    train_dirs = [str(syn_root / "train")]
-    val_dirs   = [str(syn_root / "val")]
-    if use_aug:
-        if (syn_root / "train_aug").is_dir():
-            train_dirs.append(str(syn_root / "train_aug"))
-        if (syn_root / "val_aug").is_dir():
-            val_dirs.append(str(syn_root / "val_aug"))
+    train_dirs = [str(data_root / "train")]
+    val_dirs   = [str(data_root / "val")]
 
-    train_ds = GateDataset(train_dirs, img_size=img_size, augment=True)
-    val_ds   = GateDataset(val_dirs,   img_size=img_size, augment=False)
+    train_ds = GateDataset(train_dirs, img_size=img_size, augment=augment,  use_sam_masks=use_sam_masks)
+    val_ds   = GateDataset(val_dirs,   img_size=img_size, augment=False, use_sam_masks=use_sam_masks)
 
     # persistent_workers avoids re-spawning the worker pool every epoch
     # (cheap dataset, expensive fork startup); prefetch_factor keeps the
@@ -198,7 +194,7 @@ def train(
     epochs: int = 100,
     batch_size: int = 16,
     base_lr: float = 1e-3,
-    use_aug: bool = True,
+    augment: bool = True,
     img_size: int = 384,
     model_name: str = "gatenet",
     width_factor: int = 4,
@@ -224,10 +220,11 @@ def train(
     num_workers_train: int = 4,
     num_workers_val: int = 2,
     prefetch_factor: int = 4,
-    syn_root: str | os.PathLike = SYN_ROOT,
+    use_sam_masks: bool = True,
+    data_root: str | os.PathLike | None = None,
     checkpoint_dir: str | os.PathLike = CHECKPOINTS_ROOT,
     checkpoint_name: str = "best_gatenet.pth",
-    checkpoint_interval: int = 10,
+    checkpoint_interval: int = 0,
     device: str | None = None,
 ) -> torch.nn.Module:
     """Train GateNet end-to-end.
@@ -286,11 +283,13 @@ def train(
     if compile_model and hasattr(torch, "compile"):
         model = torch.compile(model, mode=compile_mode)
 
+    resolved_data_root = data_root if data_root is not None else (SAM_ROOT if use_sam_masks else SYN_ROOT)
     train_loader, val_loader, train_ds, val_ds = build_dataloaders(
-        syn_root,
+        resolved_data_root,
         img_size=img_size,
         batch_size=batch_size,
-        use_aug=use_aug,
+        augment=augment,
+        use_sam_masks=use_sam_masks,
         num_workers_train=num_workers_train,
         num_workers_val=num_workers_val,
         prefetch_factor=prefetch_factor,
