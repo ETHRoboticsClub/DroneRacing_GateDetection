@@ -139,8 +139,7 @@ def run(shuffle: bool, all_samples: bool, splits: tuple[str, ...]) -> None:
     cv2.destroyAllWindows()
     print(f"\nSession done. Discarded {discarded} samples.")
     if discarded:
-        print("  To top up:  python scripts/prepare_labels.py --split test")
-        print("              python scripts/prepare_labels.py            (train/val)")
+        print("  To top up:  python scripts/build_sam_dataset.py")
 
 
 def main() -> None:

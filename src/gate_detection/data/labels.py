@@ -7,7 +7,7 @@ Each line is one gate. Two variants exist:
     17-col (original):
         cls cx cy w h  (inner_x inner_y vis)*4
 
-    29-col (synthetic, with outer corners added by ``generate_labels.py``):
+    29-col (with outer corners):
         cls cx cy w h  (inner_x inner_y vis)*4  (outer_x outer_y vis)*4
 
 All coordinates are normalised to ``[0, 1]``.
@@ -26,8 +26,6 @@ consumed downstream by QuAdGate / PnP.
 from __future__ import annotations
 
 import os
-from typing import Any
-
 import cv2
 import numpy as np
 
@@ -41,7 +39,7 @@ CORNER_TYPES = [
 # ---------------------------------------------------------------------------
 # Parsing
 # ---------------------------------------------------------------------------
-def parse_gates(lbl_path: str) -> list[dict[str, Any]]:
+def parse_gates(lbl_path: str) -> list[dict]:
     """Parse a label file into a list of gate dicts.
 
     Each dict has::
@@ -97,81 +95,6 @@ def all4_visible(lbl_path: str) -> bool:
         if not all(v > 0 for v in g["inner_vis"]):
             return False
     return True
-
-
-# ---------------------------------------------------------------------------
-# Outer-corner synthesis
-# ---------------------------------------------------------------------------
-def synthesize_outer(inner_norm: np.ndarray, scale: float = 1.4) -> np.ndarray:
-    """Synthesise outer corners by radial scaling from the inner centroid."""
-    centroid = inner_norm.mean(axis=0)
-    return centroid + scale * (inner_norm - centroid)
-
-
-def make_synthetic_label_lines(lbl_path: str, scale: float = 1.4) -> list[str]:
-    """Read a 17-col label file and return the 29-col line strings.
-
-    Outer-corner visibility is set to 2 only when (a) the matching inner
-    corner is visible and (b) the synthesised outer point falls inside the
-    [0, 1] image bounds; otherwise the outer entry is ``"0.0 0.0 0"``.
-    """
-    out: list[str] = []
-    with open(lbl_path) as f:
-        for line in f:
-            vals = list(map(float, line.split()))
-            if len(vals) < 17:
-                continue
-            cls = int(vals[0])
-            cx, cy, w, h = vals[1:5]
-
-            inner = np.array([[vals[5 + 3 * k], vals[6 + 3 * k]] for k in range(4)],
-                             dtype=np.float32)
-            vis_flags = [vals[7 + 3 * k] > 0 for k in range(4)]
-
-            head = f"{cls} {cx} {cy} {w} {h}"
-            for k in range(4):
-                head += f" {vals[5 + 3 * k]} {vals[6 + 3 * k]} {int(vals[7 + 3 * k])}"
-
-            outer = synthesize_outer(inner, scale=scale)
-            tail = ""
-            for (ox, oy), v_inner in zip(outer, vis_flags):
-                in_bounds = 0.0 <= ox <= 1.0 and 0.0 <= oy <= 1.0
-                vis_out = 2 if (v_inner and in_bounds) else 0
-                tail += f" {float(ox):.10f} {float(oy):.10f} {vis_out}" if vis_out \
-                        else " 0.0 0.0 0"
-
-            out.append(head + tail)
-    return out
-
-
-def gates_to_lines(gates: list[dict[str, Any]]) -> list[str]:
-    """Serialise a list of parsed gates back to label lines (29-col when outer present).
-
-    The bbox (cx, cy, w, h) is *recomputed* from the visible corners so that
-    coordinate transforms (warp, scale) propagate to the bbox automatically.
-    """
-    lines: list[str] = []
-    for g in gates:
-        all_pts = []
-        if g.get("outer") is not None:
-            all_pts.extend(pt for pt, v in zip(g["outer"], g["outer_vis"]) if v > 0)
-        all_pts.extend(pt for pt, v in zip(g["inner"], g["inner_vis"]) if v > 0)
-        if not all_pts:
-            continue
-        all_pts = np.asarray(all_pts)
-        cx = float(all_pts[:, 0].mean())
-        cy = float(all_pts[:, 1].mean())
-        w  = float(all_pts[:, 0].max() - all_pts[:, 0].min())
-        h  = float(all_pts[:, 1].max() - all_pts[:, 1].min())
-
-        line = f"{g['cls']} {cx} {cy} {w} {h}"
-        for pt, v in zip(g["inner"], g["inner_vis"]):
-            line += f" {pt[0]:.8f} {pt[1]:.8f} {v}"
-        if g.get("outer") is not None:
-            for pt, v in zip(g["outer"], g["outer_vis"]):
-                line += f" {pt[0]:.8f} {pt[1]:.8f} {v}"
-        lines.append(line)
-    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -257,37 +180,28 @@ def assign_corner_types(corners_outer: np.ndarray, corners_inner: np.ndarray) ->
 def parse_pixel_corners(
     lbl_path: str,
     img_size: int,
-    outer_scale: float = 1.4,
 ) -> list[np.ndarray]:
     """Return one ``(8, 2)`` corner array per gate in pixel coordinates.
 
-    For 17-col labels (no outer), outer corners are synthesised from the
-    inner centroid using :func:`synthesize_outer` with ``scale=outer_scale``.
-    Gates with fewer than 3 visible inner corners are skipped.
+    Gates without outer corners (17-col labels) or fewer than 3 visible
+    inner/outer corners are skipped.
     """
     if not lbl_path or not os.path.exists(lbl_path):
         return []
 
     out: list[np.ndarray] = []
     for g in parse_gates(lbl_path):
+        if g["outer"] is None:
+            continue
         inner_visible = np.array(
             [[x, y] for (x, y), v in zip(g["inner"], g["inner_vis"]) if v > 0],
             dtype=np.float32,
         )
-        if len(inner_visible) < 3:
+        outer_visible = np.array(
+            [[x, y] for (x, y), v in zip(g["outer"], g["outer_vis"]) if v > 0],
+            dtype=np.float32,
+        )
+        if len(inner_visible) < 3 or len(outer_visible) < 3:
             continue
-        inner_px = inner_visible * img_size
-
-        if g["outer"] is not None:
-            outer_visible = np.array(
-                [[x, y] for (x, y), v in zip(g["outer"], g["outer_vis"]) if v > 0],
-                dtype=np.float32,
-            )
-            if len(outer_visible) < 3:
-                continue
-            outer_px = outer_visible * img_size
-        else:
-            outer_px = synthesize_outer(inner_px, scale=outer_scale)
-
-        out.append(assign_corner_types(outer_px, inner_px))
+        out.append(assign_corner_types(outer_visible * img_size, inner_visible * img_size))
     return out

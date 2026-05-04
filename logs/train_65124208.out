@@ -1,0 +1,217 @@
+==========================================
+Job started on: Wed Apr 29 11:22:30 AM CEST 2026
+Job ID: 65124208
+Running on node: eu-g6-040
+==========================================
+/cluster/project/cvg/students/xanyap/miniconda3/envs/ethrc/bin/python
+torch 2.11.0+cu130
+cuda True
+Device: cuda
+Train: 4000 samples  Val: 1000 samples
+Epoch   1/100  lr=3.00e-05  train_loss=16.2814  val_loss=11.9040
+  IoU: train=0.0605  val=0.0436
+Epoch   2/100  lr=6.00e-05  train_loss=9.9015  val_loss=7.6748
+  IoU: train=0.1238  val=0.2739
+Epoch   3/100  lr=9.00e-05  train_loss=7.1014  val_loss=5.4105
+  IoU: train=0.3503  val=0.5950
+Epoch   4/100  lr=1.20e-04  train_loss=5.8630  val_loss=4.7628
+  IoU: train=0.5237  val=0.6058
+Epoch   5/100  lr=1.50e-04  train_loss=5.2208  val_loss=4.4429
+  IoU: train=0.5847  val=0.6138
+Epoch   6/100  lr=1.80e-04  train_loss=4.7768  val_loss=4.0666
+  IoU: train=0.6256  val=0.6629
+Epoch   7/100  lr=2.10e-04  train_loss=4.5047  val_loss=3.9819
+  IoU: train=0.6513  val=0.6634
+Epoch   8/100  lr=2.40e-04  train_loss=4.3738  val_loss=3.8623
+  IoU: train=0.6642  val=0.6664
+Epoch   9/100  lr=2.70e-04  train_loss=4.2558  val_loss=3.7131
+  IoU: train=0.6727  val=0.6978
+Epoch  10/100  lr=3.00e-04  train_loss=4.1152  val_loss=3.7246
+  IoU: train=0.6964  val=0.6998
+Epoch  11/100  lr=2.97e-04  train_loss=4.0661  val_loss=3.6628
+  IoU: train=0.7040  val=0.7211
+Epoch  12/100  lr=2.94e-04  train_loss=3.9807  val_loss=3.6414
+  IoU: train=0.7158  val=0.6927
+Epoch  13/100  lr=2.91e-04  train_loss=3.9335  val_loss=3.6428
+  IoU: train=0.7264  val=0.7119
+Epoch  14/100  lr=2.88e-04  train_loss=3.8789  val_loss=3.7451
+  IoU: train=0.7364  val=0.6820
+Epoch  15/100  lr=2.85e-04  train_loss=3.8401  val_loss=3.5312
+  IoU: train=0.7440  val=0.7322
+Epoch  16/100  lr=2.82e-04  train_loss=3.8501  val_loss=3.4951
+  IoU: train=0.7426  val=0.7404
+Epoch  17/100  lr=2.79e-04  train_loss=3.8229  val_loss=3.4785
+  IoU: train=0.7488  val=0.7487
+Epoch  18/100  lr=2.76e-04  train_loss=3.7637  val_loss=3.3897
+  IoU: train=0.7549  val=0.7695
+Epoch  19/100  lr=2.73e-04  train_loss=3.7657  val_loss=3.3971
+  IoU: train=0.7572  val=0.7697
+Epoch  20/100  lr=2.70e-04  train_loss=3.7193  val_loss=3.4120
+  IoU: train=0.7656  val=0.7787
+Epoch  21/100  lr=2.67e-04  train_loss=3.6999  val_loss=3.5107
+  IoU: train=0.7686  val=0.7572
+Epoch  22/100  lr=2.64e-04  train_loss=3.7157  val_loss=3.3940
+  IoU: train=0.7685  val=0.7703
+Epoch  23/100  lr=2.61e-04  train_loss=3.6917  val_loss=3.3635
+  IoU: train=0.7685  val=0.7754
+Epoch  24/100  lr=2.58e-04  train_loss=3.6704  val_loss=3.3387
+  IoU: train=0.7734  val=0.7800
+Epoch  25/100  lr=2.55e-04  train_loss=3.6563  val_loss=3.3767
+  IoU: train=0.7777  val=0.7783
+Epoch  26/100  lr=2.52e-04  train_loss=3.6431  val_loss=3.3621
+  IoU: train=0.7806  val=0.7872
+Epoch  27/100  lr=2.49e-04  train_loss=3.6783  val_loss=3.3433
+  IoU: train=0.7748  val=0.7808
+Epoch  28/100  lr=2.46e-04  train_loss=3.6425  val_loss=3.3089
+  IoU: train=0.7813  val=0.7955
+Epoch  29/100  lr=2.43e-04  train_loss=3.6440  val_loss=3.2985
+  IoU: train=0.7807  val=0.7943
+Epoch  30/100  lr=2.39e-04  train_loss=3.6090  val_loss=3.3721
+  IoU: train=0.7857  val=0.7840
+Epoch  31/100  lr=2.36e-04  train_loss=3.5958  val_loss=3.3028
+  IoU: train=0.7881  val=0.7954
+Epoch  32/100  lr=2.33e-04  train_loss=3.6192  val_loss=3.3202
+  IoU: train=0.7858  val=0.7820
+Epoch  33/100  lr=2.30e-04  train_loss=3.5739  val_loss=3.3011
+  IoU: train=0.7895  val=0.7909
+Epoch  34/100  lr=2.27e-04  train_loss=3.5870  val_loss=3.3075
+  IoU: train=0.7891  val=0.7973
+Epoch  35/100  lr=2.24e-04  train_loss=3.5652  val_loss=3.2689
+  IoU: train=0.7929  val=0.8022
+Epoch  36/100  lr=2.21e-04  train_loss=3.5510  val_loss=3.3051
+  IoU: train=0.7954  val=0.7994
+Epoch  37/100  lr=2.18e-04  train_loss=3.5740  val_loss=3.2895
+  IoU: train=0.7908  val=0.8009
+Epoch  38/100  lr=2.15e-04  train_loss=3.5648  val_loss=3.2901
+  IoU: train=0.7936  val=0.7990
+Epoch  39/100  lr=2.12e-04  train_loss=3.5535  val_loss=3.3132
+  IoU: train=0.7957  val=0.7864
+Epoch  40/100  lr=2.09e-04  train_loss=3.5273  val_loss=3.2154
+  IoU: train=0.7982  val=0.8101
+Epoch  41/100  lr=2.05e-04  train_loss=3.5516  val_loss=3.3003
+  IoU: train=0.7987  val=0.8013
+Epoch  42/100  lr=2.02e-04  train_loss=3.5293  val_loss=3.2814
+  IoU: train=0.7996  val=0.8002
+Epoch  43/100  lr=1.99e-04  train_loss=3.5377  val_loss=3.3245
+  IoU: train=0.7996  val=0.7878
+Epoch  44/100  lr=1.96e-04  train_loss=3.5094  val_loss=3.2478
+  IoU: train=0.8012  val=0.8075
+Epoch  45/100  lr=1.93e-04  train_loss=3.5077  val_loss=3.2752
+  IoU: train=0.8017  val=0.7971
+Epoch  46/100  lr=1.90e-04  train_loss=3.5191  val_loss=3.2943
+  IoU: train=0.8017  val=0.8018
+Epoch  47/100  lr=1.87e-04  train_loss=3.4911  val_loss=3.2325
+  IoU: train=0.8068  val=0.8083
+Epoch  48/100  lr=1.83e-04  train_loss=3.4888  val_loss=3.2689
+  IoU: train=0.8067  val=0.8045
+Epoch  49/100  lr=1.80e-04  train_loss=3.4876  val_loss=3.2095
+  IoU: train=0.8054  val=0.8080
+Epoch  50/100  lr=1.77e-04  train_loss=3.4863  val_loss=3.2561
+  IoU: train=0.8067  val=0.8054
+Epoch  51/100  lr=1.74e-04  train_loss=3.5055  val_loss=3.1925
+  IoU: train=0.8054  val=0.8203
+Epoch  52/100  lr=1.71e-04  train_loss=3.5025  val_loss=3.2126
+  IoU: train=0.8063  val=0.8121
+Epoch  53/100  lr=1.68e-04  train_loss=3.4822  val_loss=3.1916
+  IoU: train=0.8086  val=0.8208
+Epoch  54/100  lr=1.64e-04  train_loss=3.4656  val_loss=3.1978
+  IoU: train=0.8101  val=0.8153
+Epoch  55/100  lr=1.61e-04  train_loss=3.4775  val_loss=3.2461
+  IoU: train=0.8112  val=0.8074
+Epoch  56/100  lr=1.58e-04  train_loss=3.4897  val_loss=3.1957
+  IoU: train=0.8070  val=0.8174
+Epoch  57/100  lr=1.55e-04  train_loss=3.4706  val_loss=3.2091
+  IoU: train=0.8115  val=0.8169
+Epoch  58/100  lr=1.52e-04  train_loss=3.4770  val_loss=3.2082
+  IoU: train=0.8097  val=0.8141
+Epoch  59/100  lr=1.48e-04  train_loss=3.4755  val_loss=3.2200
+  IoU: train=0.8083  val=0.8143
+Epoch  60/100  lr=1.45e-04  train_loss=3.4522  val_loss=3.2489
+  IoU: train=0.8122  val=0.8095
+Epoch  61/100  lr=1.42e-04  train_loss=3.4585  val_loss=3.2054
+  IoU: train=0.8134  val=0.8177
+Epoch  62/100  lr=1.39e-04  train_loss=3.4588  val_loss=3.1832
+  IoU: train=0.8140  val=0.8163
+Epoch  63/100  lr=1.35e-04  train_loss=3.4290  val_loss=3.2263
+  IoU: train=0.8158  val=0.8141
+Epoch  64/100  lr=1.32e-04  train_loss=3.4303  val_loss=3.1607
+  IoU: train=0.8157  val=0.8220
+Epoch  65/100  lr=1.29e-04  train_loss=3.4271  val_loss=3.1979
+  IoU: train=0.8168  val=0.8162
+Epoch  66/100  lr=1.26e-04  train_loss=3.4405  val_loss=3.1990
+  IoU: train=0.8151  val=0.8175
+Epoch  67/100  lr=1.22e-04  train_loss=3.4308  val_loss=3.1701
+  IoU: train=0.8163  val=0.8281
+Epoch  68/100  lr=1.19e-04  train_loss=3.4444  val_loss=3.1659
+  IoU: train=0.8160  val=0.8221
+Epoch  69/100  lr=1.16e-04  train_loss=3.4356  val_loss=3.1818
+  IoU: train=0.8169  val=0.8239
+Epoch  70/100  lr=1.12e-04  train_loss=3.4455  val_loss=3.1749
+  IoU: train=0.8142  val=0.8217
+Epoch  71/100  lr=1.09e-04  train_loss=3.4379  val_loss=3.1612
+  IoU: train=0.8174  val=0.8219
+Epoch  72/100  lr=1.06e-04  train_loss=3.4253  val_loss=3.1599
+  IoU: train=0.8165  val=0.8236
+Epoch  73/100  lr=1.02e-04  train_loss=3.3910  val_loss=3.2239
+  IoU: train=0.8221  val=0.8140
+Epoch  74/100  lr=9.88e-05  train_loss=3.4292  val_loss=3.1618
+  IoU: train=0.8188  val=0.8281
+Epoch  75/100  lr=9.54e-05  train_loss=3.4173  val_loss=3.1514
+  IoU: train=0.8203  val=0.8296
+Epoch  76/100  lr=9.20e-05  train_loss=3.3980  val_loss=3.1789
+  IoU: train=0.8205  val=0.8235
+Epoch  77/100  lr=8.86e-05  train_loss=3.4090  val_loss=3.1643
+  IoU: train=0.8212  val=0.8254
+Epoch  78/100  lr=8.51e-05  train_loss=3.4026  val_loss=3.1362
+  IoU: train=0.8215  val=0.8306
+Epoch  79/100  lr=8.17e-05  train_loss=3.3890  val_loss=3.2035
+  IoU: train=0.8225  val=0.8202
+Epoch  80/100  lr=7.82e-05  train_loss=3.3896  val_loss=3.1854
+  IoU: train=0.8223  val=0.8228
+Epoch  81/100  lr=7.47e-05  train_loss=3.3937  val_loss=3.1836
+  IoU: train=0.8210  val=0.8205
+Epoch  82/100  lr=7.12e-05  train_loss=3.3879  val_loss=3.1849
+  IoU: train=0.8251  val=0.8227
+Epoch  83/100  lr=6.77e-05  train_loss=3.4025  val_loss=3.1334
+  IoU: train=0.8222  val=0.8327
+Epoch  84/100  lr=6.42e-05  train_loss=3.3961  val_loss=3.1777
+  IoU: train=0.8224  val=0.8213
+Epoch  85/100  lr=6.06e-05  train_loss=3.3766  val_loss=3.1438
+  IoU: train=0.8239  val=0.8316
+Epoch  86/100  lr=5.70e-05  train_loss=3.3952  val_loss=3.1785
+  IoU: train=0.8218  val=0.8252
+Epoch  87/100  lr=5.34e-05  train_loss=3.4006  val_loss=3.2001
+  IoU: train=0.8231  val=0.8211
+Epoch  88/100  lr=4.98e-05  train_loss=3.3995  val_loss=3.1589
+  IoU: train=0.8230  val=0.8267
+Epoch  89/100  lr=4.61e-05  train_loss=3.3933  val_loss=3.1697
+  IoU: train=0.8238  val=0.8249
+Epoch  90/100  lr=4.24e-05  train_loss=3.3900  val_loss=3.1715
+  IoU: train=0.8254  val=0.8255
+Epoch  91/100  lr=3.86e-05  train_loss=3.3834  val_loss=3.1683
+  IoU: train=0.8251  val=0.8256
+Epoch  92/100  lr=3.49e-05  train_loss=3.3782  val_loss=3.1692
+  IoU: train=0.8242  val=0.8255
+Epoch  93/100  lr=3.10e-05  train_loss=3.3842  val_loss=3.1507
+  IoU: train=0.8257  val=0.8286
+Epoch  94/100  lr=2.71e-05  train_loss=3.3624  val_loss=3.1665
+  IoU: train=0.8273  val=0.8294
+Epoch  95/100  lr=2.32e-05  train_loss=3.3770  val_loss=3.1624
+  IoU: train=0.8246  val=0.8299
+Epoch  96/100  lr=1.91e-05  train_loss=3.3824  val_loss=3.1615
+  IoU: train=0.8257  val=0.8285
+Epoch  97/100  lr=1.50e-05  train_loss=3.3734  val_loss=3.1687
+  IoU: train=0.8264  val=0.8280
+Epoch  98/100  lr=1.07e-05  train_loss=3.3844  val_loss=3.1553
+  IoU: train=0.8273  val=0.8282
+Epoch  99/100  lr=6.21e-06  train_loss=3.3595  val_loss=3.1576
+  IoU: train=0.8277  val=0.8277
+Epoch 100/100  lr=1.00e-06  train_loss=3.3716  val_loss=3.1698
+  IoU: train=0.8267  val=0.8261
+ best_gatenet -> /cluster/scratch/xanyap/ETHRC-Drone-Racing/src/perception/DroneRacing_GateDetection/checkpoints/best_gatenet.pth (epoch 83, val_iou=0.8327)
+
+Done. Best val IoU: 0.8327 (val_loss=3.1334)
+==========================================
+Job completed on: Wed Apr 29 11:47:50 AM CEST 2026
+Total runtime: 1520 seconds
+==========================================
