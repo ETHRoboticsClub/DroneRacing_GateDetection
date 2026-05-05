@@ -59,12 +59,61 @@
 
 % ─── graphics & links ─────────────────────────────────────────────────────
 \usepackage{graphicx}
+\usepackage{tikz}
+\usetikzlibrary{calc}
 \usepackage[hidelinks]{hyperref}
 \hypersetup{
   colorlinks=true,
   linkcolor=ink,
   urlcolor=accent,
   citecolor=ink,
+}
+
+% ─── dotted-drone cover watermark ─────────────────────────────────────────
+% Inspired by ESRA's dotted-Europe hero treatment: a uniform grid of small
+% dots clipped to a top-down quadcopter silhouette (central body, four
+% diagonal arms in an X, four propeller circles).
+%
+% Geometry (TikZ units, 1 unit = 1cm by default):
+%   body        rounded square, half-side B around origin
+%   propellers  four circles centred on (R, R), (-R, R), (-R, -R), (R, -R)
+%   arms        thick rotated rectangles connecting body corners to props
+\newcommand{\DroneDotWatermark}{%
+  \begin{tikzpicture}[overlay, remember picture]
+  % shift slightly down of page centre so the title block sits cleanly over
+  % the body of the drone, with propellers framing top-bottom-left-right.
+  \begin{scope}[shift={($(current page.center)+(0,-2.6cm)$)}, scale=1.40]
+    \begin{scope}
+      \clip
+        % central body — slightly rounded square
+        [rounded corners=6pt] (-1.8,-1.8) rectangle (1.8,1.8) [sharp corners]
+        % propellers — circle on each diagonal at radius R=4.6
+        ({4.6/sqrt(2)},  {4.6/sqrt(2)})  circle (2.05)
+        ({-4.6/sqrt(2)}, {4.6/sqrt(2)})  circle (2.05)
+        ({4.6/sqrt(2)},  {-4.6/sqrt(2)}) circle (2.05)
+        ({-4.6/sqrt(2)}, {-4.6/sqrt(2)}) circle (2.05)
+        % arms — fatter rectangles (half-width 0.85) connecting body to props
+        % NE arm: body-NW corner -> outer-NW -> outer-SE -> body-SE
+        (0.20, 1.65) -- ({4.6/sqrt(2) - 0.85}, {4.6/sqrt(2) + 0.85}) --
+        ({4.6/sqrt(2) + 0.85}, {4.6/sqrt(2) - 0.85}) -- (1.65, 0.20) -- cycle
+        % NW arm
+        (-1.65, 0.20) -- ({-4.6/sqrt(2) - 0.85}, {4.6/sqrt(2) - 0.85}) --
+        ({-4.6/sqrt(2) + 0.85}, {4.6/sqrt(2) + 0.85}) -- (-0.20, 1.65) -- cycle
+        % SE arm
+        (1.65, -0.20) -- ({4.6/sqrt(2) + 0.85}, {-4.6/sqrt(2) + 0.85}) --
+        ({4.6/sqrt(2) - 0.85}, {-4.6/sqrt(2) - 0.85}) -- (0.20, -1.65) -- cycle
+        % SW arm
+        (-0.20, -1.65) -- ({-4.6/sqrt(2) + 0.85}, {-4.6/sqrt(2) - 0.85}) --
+        ({-4.6/sqrt(2) - 0.85}, {-4.6/sqrt(2) + 0.85}) -- (-1.65, -0.20) -- cycle;
+      % tighter dot grid for halftone density
+      \foreach \x in {-8.4,-8.13,...,8.4}{
+        \foreach \y in {-8.4,-8.13,...,8.4}{
+          \fill[ink, opacity=0.20] (\x,\y) circle (0.052);
+        }
+      }
+    \end{scope}
+  \end{scope}
+  \end{tikzpicture}%
 }
 
 % ─── bibliography ─────────────────────────────────────────────────────────
@@ -85,6 +134,7 @@
 % COVER
 % ─────────────────────────────────────────────────────────────────────────
 \thispagestyle{empty}
+\DroneDotWatermark
 \begin{center}
 \vspace*{2.5cm}
 \includegraphics[width=0.55\linewidth]{media/logos/ETHRC_primaryblack.pdf}\\[2.4cm]
