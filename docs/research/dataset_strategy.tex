@@ -338,6 +338,182 @@ fine-tuning under shifting illumination.}
 \end{figure}%
 }
 
+% Fig 5: Ring-mask construction. Three panels: (a) labelled inner corners
+% from the dataset, (b) outer corners synthesised at scale=1.4 from the
+% inner centroid (\code{benchmark_pnp.py:79--81}), (c) the binary ring
+% obtained by filling the outer polygon and erasing the inner one
+% (\code{labels.py:103--146}).
+\newcommand{\FigRingMask}{%
+\begin{figure}[!ht]
+\centering
+\begin{tikzpicture}[font=\footnotesize]
+  % Panel A: gate frame with inner corners
+  \begin{scope}
+    \node[draw=rule, rounded corners=1pt, minimum width=4cm, minimum height=4cm, fill=tealtint!50] (frameA) at (0,0) {};
+    \def\ix{1.0} \def\iy{1.0}
+    % Inner quadrilateral (slightly perspective-skewed)
+    \coordinate (i1) at (-0.95,  0.85);
+    \coordinate (i2) at ( 1.10,  0.95);
+    \coordinate (i3) at ( 0.95, -1.05);
+    \coordinate (i4) at (-1.05, -0.85);
+    \draw[teal, line width=0.7pt] (i1) -- (i2) -- (i3) -- (i4) -- cycle;
+    \foreach \p in {i1, i2, i3, i4}
+      \fill[coral] (\p) circle (0.085);
+    \node[anchor=north, font=\scriptsize\titlefont, color=ink, yshift=-0.1cm] at (frameA.south) {(a) inner corners (label)};
+  \end{scope}
+  % Panel B: outer corners synthesised at scale=1.4 from centroid
+  \begin{scope}[xshift=5cm]
+    \node[draw=rule, rounded corners=1pt, minimum width=4cm, minimum height=4cm, fill=tealtint!50] (frameB) at (0,0) {};
+    \coordinate (i1) at (-0.95,  0.85);
+    \coordinate (i2) at ( 1.10,  0.95);
+    \coordinate (i3) at ( 0.95, -1.05);
+    \coordinate (i4) at (-1.05, -0.85);
+    \coordinate (cen) at (0.0125, -0.025);  % approx centroid of i1..i4
+    % outer = centroid + 1.4*(inner - centroid)
+    \coordinate (o1) at ($ (cen)!1.4!(i1) $);
+    \coordinate (o2) at ($ (cen)!1.4!(i2) $);
+    \coordinate (o3) at ($ (cen)!1.4!(i3) $);
+    \coordinate (o4) at ($ (cen)!1.4!(i4) $);
+    \draw[teal, line width=0.7pt] (i1) -- (i2) -- (i3) -- (i4) -- cycle;
+    \draw[forest, line width=0.7pt, dashed] (o1) -- (o2) -- (o3) -- (o4) -- cycle;
+    \foreach \p in {i1, i2, i3, i4}
+      \fill[coral] (\p) circle (0.085);
+    \foreach \p in {o1, o2, o3, o4}
+      \draw[forest, line width=0.7pt] (\p) circle (0.085);
+    \fill[ink] (cen) circle (0.04);
+    \node[anchor=west, font=\scriptsize\color{forest}, xshift=0.05cm, yshift=0.03cm] at (cen) {centroid};
+    \node[anchor=north, font=\scriptsize\titlefont, color=ink, yshift=-0.1cm] at (frameB.south) {(b) outer = centroid $+\,1.4\cdot$(inner$-$centroid)};
+  \end{scope}
+  % Panel C: ring mask (filled outer, hole at inner)
+  \begin{scope}[xshift=10cm]
+    \node[draw=rule, rounded corners=1pt, minimum width=4cm, minimum height=4cm, fill=paper] (frameC) at (0,0) {};
+    \coordinate (i1) at (-0.95,  0.85);
+    \coordinate (i2) at ( 1.10,  0.95);
+    \coordinate (i3) at ( 0.95, -1.05);
+    \coordinate (i4) at (-1.05, -0.85);
+    \coordinate (cen) at (0.0125, -0.025);
+    \coordinate (o1) at ($ (cen)!1.4!(i1) $);
+    \coordinate (o2) at ($ (cen)!1.4!(i2) $);
+    \coordinate (o3) at ($ (cen)!1.4!(i3) $);
+    \coordinate (o4) at ($ (cen)!1.4!(i4) $);
+    % Filled ring via even-odd rule: outer poly + inner poly together
+    \fill[coral!85, even odd rule] (o1) -- (o2) -- (o3) -- (o4) -- cycle  (i1) -- (i2) -- (i3) -- (i4) -- cycle;
+    \node[anchor=north, font=\scriptsize\titlefont, color=ink, yshift=-0.1cm] at (frameC.south) {(c) ring mask = outer\,$\setminus$\,inner};
+  \end{scope}
+\end{tikzpicture}
+\caption*{\footnotesize\textbf{Figure 5.} Ring-mask construction. The dataset only labels the four \emph{inner} corners of each gate
+(coral dots). Outer corners (forest rings) are synthesised offline by radial scaling about the inner centroid with factor
+$1.4$ (\code{benchmark_pnp.py:79--81}). The training target is the binary ring between the two quadrilaterals
+(\code{src/gate_detection/data/labels.py:103--146}); the gap between the rectangles is exactly the descriptor signal
+QuAdGate's LSD line-segment matcher needs.}
+\label{fig:ringmask}
+\end{figure}%
+}
+
+% Fig 6: Architecture side-by-side --- GateNet (5-stage U-Net with deep
+% supervision) vs DeepLabV3+ (resnet34 encoder + ASPP + decoder, single
+% head). All numbers cited from gatenet.py:20--77 and deeplabv3plus.py:11--37.
+\newcommand{\FigArchCompare}{%
+\begin{figure}[!ht]
+\centering
+\begin{tikzpicture}[
+  font=\scriptsize,
+  encblk/.style={draw=teal,  fill=tealtint,  rounded corners=1pt, minimum width=0.95cm, minimum height=0.55cm, inner sep=2pt, align=center},
+  decblk/.style={draw=coral, fill=coraltint, rounded corners=1pt, minimum width=0.95cm, minimum height=0.55cm, inner sep=2pt, align=center},
+  asppblk/.style={draw=forest, fill=foresttint, rounded corners=1pt, minimum width=1.05cm, minimum height=0.55cm, inner sep=2pt, align=center},
+  headblk/.style={draw=muted!90, fill=rule!30, rounded corners=1pt, minimum width=0.65cm, minimum height=0.45cm, inner sep=2pt, align=center, font=\tiny},
+  arr/.style={-{Stealth[length=3pt]}, color=muted, line width=0.55pt},
+]
+  % --- ROW 1 : GateNet ---------------------------------------------------
+  \node[font=\footnotesize\titlefont\bfseries, anchor=west] at (-0.5, 1.5) {GateNet (custom U-Net)};
+  \node[encblk] (e0) at (0,    0.6) {inc\\\tiny 16ch};
+  \node[encblk] (e1) at (1.10, 0.6) {d1\\\tiny 32};
+  \node[encblk] (e2) at (2.20, 0.6) {d2\\\tiny 64};
+  \node[encblk] (e3) at (3.30, 0.6) {d3\\\tiny 128};
+  \node[encblk] (e4) at (4.40, 0.6) {d4\\\tiny 128};
+  \node[decblk] (u1) at (5.55, 0.6) {u1\\\tiny 64};
+  \node[decblk] (u2) at (6.65, 0.6) {u2\\\tiny 32};
+  \node[decblk] (u3) at (7.75, 0.6) {u3\\\tiny 16};
+  \node[decblk] (u4) at (8.85, 0.6) {u4\\\tiny 16};
+  % deep-supervision heads
+  \foreach \n/\src/\w in {y0/e4/4, y1/u1/2, y2/u2/1, y3/u3/1, y4/u4/1} {
+    \node[headblk, below=0.45cm of \src] (\n) {\n\\\tiny w=\w};
+    \draw[arr] (\src) -- (\n);
+  }
+  \draw[arr] (e0) -- (e1); \draw[arr] (e1) -- (e2); \draw[arr] (e2) -- (e3); \draw[arr] (e3) -- (e4);
+  \draw[arr] (e4) -- (u1); \draw[arr] (u1) -- (u2); \draw[arr] (u2) -- (u3); \draw[arr] (u3) -- (u4);
+  \node[anchor=west, font=\tiny\color{muted}] at (-0.5, -0.85) {channel divisor $f=4$ \,$\Rightarrow$\, [16,32,64,128,128] \,/\, deep-supervision weights $(4,2,1,1,1)$ \,/\, only $y_4$ is used at deployment};
+  % --- ROW 2 : DeepLabV3+ -----------------------------------------------
+  \node[font=\footnotesize\titlefont\bfseries, anchor=west] at (-0.5, -2.0) {DeepLabV3+ (smp wrapper)};
+  \node[encblk, minimum width=2.7cm] (rn) at (1.0, -2.9) {ResNet-34 encoder\\\tiny ImageNet (optional)};
+  \node[asppblk] (aspp) at (3.6, -2.9) {ASPP\\\tiny 1,6,12,18};
+  \node[decblk, minimum width=1.4cm] (dec) at (5.5, -2.9) {decoder};
+  \node[headblk, minimum width=0.85cm, minimum height=0.55cm] (head) at (7.0, -2.9) {head\\\tiny w=1};
+  \draw[arr] (rn) -- (aspp); \draw[arr] (aspp) -- (dec); \draw[arr] (dec) -- (head);
+  \node[anchor=west, font=\tiny\color{muted}] at (-0.5, -3.7) {single-scale Dice\,+\,2.0$\times$BCE \,/\, ResNet-34 ImageNet weights are \emph{available} but \code{encoder_weights=None} in \code{configs/default.yaml}};
+  % legend
+  \node[anchor=west, font=\tiny] at (-0.5, -4.4)
+    {\textcolor{teal}{\rule[0.18ex]{0.45em}{0.45em}}\, encoder \hspace{0.5em}
+     \textcolor{coral}{\rule[0.18ex]{0.45em}{0.45em}}\, decoder \hspace{0.5em}
+     \textcolor{forest}{\rule[0.18ex]{0.45em}{0.45em}}\, atrous spatial pooling \hspace{0.5em}
+     \textcolor{muted}{\rule[0.18ex]{0.45em}{0.45em}}\, output head};
+\end{tikzpicture}
+\caption*{\footnotesize\textbf{Figure 6.} The two backbones the repository can train (\code{src/gate_detection/models/}). GateNet is
+a narrow U-Net with five sigmoid heads: $y_0$ at the bottleneck, $y_4$ at full resolution, and three intermediate decoder taps;
+the deep-supervision sum weights early-decoder heads more heavily ($4,2,1,1,1$). DeepLabV3+ is single-headed, with the option of
+loading ImageNet-pretrained ResNet-34 weights (currently disabled by default). Both feed the same QuAdGate corner extractor.}
+\label{fig:archcompare}
+\end{figure}%
+}
+
+% Fig 7: Method-space landscape. A taxonomy showing where this work sits
+% relative to recent published competition entries, grouped by *target
+% representation* (mask vs keypoint vs hybrid).
+\newcommand{\FigSotaMap}{%
+\begin{figure}[!ht]
+\centering
+\begin{tikzpicture}[font=\footnotesize]
+  % horizontal axis: target representation
+  \def\colW{4.3}                            % column width (cm)
+  \pgfmathsetmacro{\colT}{\colW - 0.3}      % text width inside each column
+  \pgfmathsetmacro{\totalW}{3*\colW - 0.1}  % total width for the bottom caption
+  % column headers (coloured banners)
+  \fill[teal!80]   ($(0*\colW,0)+(-0.05,0)$)   rectangle ($(0*\colW,0)+(\colW-0.05,0.7)$);
+  \fill[coral!80]  ($(1*\colW,0)+(-0.05,0)$)   rectangle ($(1*\colW,0)+(\colW-0.05,0.7)$);
+  \fill[forest!80] ($(2*\colW,0)+(-0.05,0)$)   rectangle ($(2*\colW,0)+(\colW-0.05,0.7)$);
+  \node[white, font=\footnotesize\titlefont\bfseries] at ({0*\colW + (\colW-0.1)/2}, 0.35) {Mask only};
+  \node[white, font=\footnotesize\titlefont\bfseries] at ({1*\colW + (\colW-0.1)/2}, 0.35) {Keypoint only};
+  \node[white, font=\footnotesize\titlefont\bfseries] at ({2*\colW + (\colW-0.1)/2}, 0.35) {Hybrid (mask + corners)};
+  % column bodies — text width-constrained so they cannot bust the column
+  % MASK column
+  \node[anchor=north west, align=left, text width=\colT cm, font=\footnotesize, inner sep=2pt] at ({0*\colW}, -0.1)
+    {\textbf{PencilNet}~\cite{pham2022pencilnet}\\ \scriptsize sim-only $\rightarrow$ pencil-filtered fish-eye; 32\,k params; TX2\\[0.25em]
+     \textbf{GateNet 2021}~\cite{pham2021gatenet}\\ \scriptsize fish-eye gate \emph{pose}; 60\,Hz on TX2\\[0.25em]
+     \textbf{Continual-learning}~\cite{qiao2024continual}\\ \scriptsize PencilNet backbone $+$ DER++ rehearsal};
+  % KEYPOINT column
+  \node[anchor=north west, align=left, text width=\colT cm, font=\footnotesize, inner sep=2pt] at ({1*\colW}, -0.1)
+    {\textbf{AlphaPilot}~\cite{foehn2020alphapilot}\\ \scriptsize 2019 challenge runner-up; learned keypoints\\[0.25em]
+     \textbf{YOLOv8-Pose}~\cite{azhari2025drift}\\ \scriptsize A2RL 2025 podium; $0.971$ kp mAP, 62\,Hz Orin NX\\[0.25em]
+     \textbf{Nano-drone PULP-FCN}~\cite{scarciglia2025gate}\\ \scriptsize 4 corners; 1.4\,px RMSE, 30\,Hz GAP8};
+  % HYBRID column
+  \node[anchor=north west, align=left, text width=\colT cm, font=\footnotesize, inner sep=2pt] at ({2*\colW}, -0.1)
+    {\textbf{MonoRace}~\cite{bahnam2026monorace}\\ \scriptsize A2RL 2025 winner; segmentation $+$ QuAdGate corners\\[0.25em]
+     \textbf{[$\bullet$ This work]}\\ \scriptsize ring-mask $+$ QuAdGate; SAM2 label refinement\\ \scriptsize \textbf{82\,\% TII / 39\,\% real} \,$\Rightarrow$\, method right, generalisation failing};
+  % bottom rule + caption-style footnote constrained to total width
+  \draw[color=rule, line width=0.6pt] (-0.05, -4.05) -- (3*\colW-0.05, -4.05);
+  \node[anchor=north west, text width=\totalW cm, font=\tiny\color{muted}, inner sep=2pt] at (-0.05, -4.10)
+    {Grouping by output representation. The hybrid column is the geometrically-justified place to stand for PnP-driven racing;
+     the keypoint column is what is currently winning in raw real-world numbers.};
+\end{tikzpicture}
+\caption*{\footnotesize\textbf{Figure 7.} Where this brief sits in the 2024--2026 method landscape. Pure-mask methods (teal)
+optimise an illumination-robust input representation but rely on classical post-processing for pose. Pure-keypoint methods
+(coral) regress 4--8 corner coordinates directly and are the current podium-winning approach on real A2RL hardware. Hybrid
+methods (forest) keep both --- a segmentation mask for descriptor matching and corner keypoints for PnP. This repository is
+in the hybrid column.}
+\label{fig:sotamap}
+\end{figure}%
+}
+
 \begin{document}
 
 % ─────────────────────────────────────────────────────────────────────────
@@ -469,7 +645,148 @@ AlphaPilot 2019 & 2019 & Real & 28\,k images, bbox + corner keypoints & \textbf{
 \paragraph{Take-away.} Only one dataset in this list, TII, delivers labels that fit our exact pipeline without re-annotation, and it is the one we already train on. Every other public source either (a) lacks gate labels, (b) provides single-pose labels rather than per-corner keypoints, or (c) is closed. Closing the competition domain gap therefore cannot be done by adding more public data; it must be done by adding synthetic data (with our own labels) and by collecting and labelling real footage from our own flights and from each competition venue.
 
 % ─────────────────────────────────────────────────────────────────────────
-% 4. RECOMMENDED TRAINING STACK
+% 4. GATE SEGMENTATION METHOD
+% ─────────────────────────────────────────────────────────────────────────
+\section{Gate segmentation method}
+
+The dataset choice in \S3 only matters once we know what the segmentation \emph{model} is doing with the data. This section
+specifies (4.1) the supervision target, (4.2) the two backbones the repository can train, (4.3) what 2024--2026 published
+methods do instead, and (4.4) an honest pros / cons read of the current design against that benchmark. Every claim that
+follows is anchored either to a file:line in the repository or to a paper whose abstract was re-fetched and whose claim was
+quoted verbatim.
+
+\subsection{What ``gate segmentation'' means in this repo}
+
+The segmentation head outputs a single-channel \textbf{binary ring mask} on a $384{\times}384$ RGB input (\code{configs/default.yaml:5}).
+The ring is the band between the gate's inner and outer rectangles; only the four \emph{inner} corners are labelled in the
+TII dataset, so outer corners are synthesised offline by radial scaling about the inner centroid with factor $1.4$
+(\code{benchmark_pnp.py:79--81}, exactly $\mathrm{outer}=\mathrm{centroid}+1.4\cdot(\mathrm{inner}-\mathrm{centroid})$).
+The training mask is then ``fill outer polygon, erase inner polygon'' (\code{src/gate_detection/data/labels.py:103--146}).
+
+\FigRingMask
+
+The ring exists for QuAdGate. The downstream corner extractor finds Line-Segment-Detector edges, intersects them inside the
+mask, and matches the intersections by a small descriptor learned alongside the segmentation backbone --- a strategy mirrored
+in MonoRace's competition-winning A2RL pipeline (\cite{bahnam2026monorace}, Fig.~5--6). A filled quadrilateral target would
+remove that signal; the ring is therefore not an aesthetic choice, it is the right supervision shape for a PnP-driven
+geometry-first detector.
+
+\subsection{What we have today}
+
+\textbf{Two interchangeable backbones} are exposed by the repository (\code{src/gate_detection/models/}):
+
+\begin{itemize}
+  \item \textbf{GateNet} (\code{models/gatenet.py:20--77}): a narrow custom U-Net with channel divisor $f{=}4$,
+    yielding stage widths $[16, 32, 64, 128, 128]$ and four upsampling stages. It emits five sigmoid heads $y_0$ through $y_4$
+    --- one at the bottleneck, one at full resolution, three intermediate --- that supply deep-supervision losses with weights
+    $(4, 2, 1, 1, 1)$ (\code{losses/segmentation.py:30--34}).
+  \item \textbf{DeepLabV3+} (\code{models/deeplabv3plus.py:11--37}): \texttt{segmentation\_models\_pytorch} wrapper, ResNet-34
+    encoder, ASPP atrous-rate dilation, single sigmoid head. The \code{encoder_weights} flag accepts \texttt{"imagenet"} but
+    is set to \texttt{None} by default in \code{configs/default.yaml:14}, so ResNet-34 currently trains from scratch.
+\end{itemize}
+
+\FigArchCompare
+
+\textbf{Loss.} Per-scale Dice $+$ $2.0\times$BCE, summed with the deep-supervision weights above
+(\code{losses/segmentation.py:30--60}). Dice uses Kornia's binary variant on a two-channel (bg, fg) tensor; BCE is forced to
+fp32 inside \code{torch.autocast} to avoid bf16 $\log(0)$ overflow (\code{losses/segmentation.py:57--58}).
+
+\textbf{Training.} AdamW at $3{\times}10^{-4}$ with weight decay $10^{-4}$, polynomial-HF schedule (warmup $0.1$, power $0.9$,
+$\text{lr}_{\text{end}}{=}10^{-6}$), batch 8, 100 epochs, bf16 AMP, \code{torch.compile(mode="max-autotune")}, channels-last
+memory format (\code{configs/default.yaml:18--40}).
+
+\textbf{Augmentation.} Online: horizontal flip, $\pm 15\degree$ affine with $\pm 10\,\%$ translation and $0.9$--$1.1$ scale,
+HSV jitter $\pm 10$ on hue and $0.8$--$1.2$ on saturation/value, motion blur with kernel 5--15\,px at random angle, and
+Gaussian noise with $\sigma\le 15$ (\code{src/gate_detection/data/transforms.py:91--98}). Offline: composite gates onto
+Places365-custom indoor backgrounds at $5\times$ multiplier via \code{scripts/augment_data.py} and
+\code{scripts/download_backgrounds.py}.
+
+\textbf{Mask refinement via SAM2.} Training masks are not just rasterised polygons; \code{configs/default.yaml:7} sets
+\code{use_sam_masks: true}, and \code{scripts/generate_sam_masks.py} runs SAM2 (\code{facebook/sam2.1-hiera-large},
+\code{models/sam2.py:18}) with the labelled bounding box as a prompt, then subtracts the inner polygon to obtain a
+ring-shaped \emph{soft} mask. This pre-processing happens once; SAM2 is not in the inference path. The technique is uncommon
+in published gate-detection work and is one of the more interesting bets in the codebase.
+
+\subsection{What 2024--2026 SOTA looks like}
+
+Three families dominate recent published drone-racing perception:
+
+\begin{itemize}
+  \item \textbf{Pure keypoint regression on a YOLO backbone} is what currently wins on real hardware. The A2RL 2025 podium
+    entry \cite{azhari2025drift} runs \textsc{YOLOv8-Pose} (s) at $640{\times}640$, reports $0.971$ keypoint mAP and $0.877$
+    bounding-box mAP, and clears 16.1\,ms (62\,Hz) on a Jetson Orin NX after TensorRT export. AlphaPilot's 2019 challenge
+    runner-up \cite{foehn2020alphapilot} pioneered learned-keypoint gate detection. The nano-drone Crazyflie work of
+    \cite{scarciglia2025gate} regresses four corner coordinates from $160{\times}160$ monochrome on a GAP8 MCU at
+    1.4\,px RMSE / 30\,Hz.
+  \item \textbf{Pure-mask methods, illumination-first}: PencilNet \cite{pham2022pencilnet} achieves zero-shot sim-to-real by
+    pre-processing every image with an edge-emphasising morphological filter (Algorithm~1 of that paper); the continual-learning
+    extension \cite{qiao2024continual} uses the same backbone and a DER++ rehearsal buffer to recover from
+    illumination-shift catastrophic forgetting.
+  \item \textbf{Hybrid (mask + classical corners)} is what MonoRace, the A2RL April 2025 champion, runs (\cite{bahnam2026monorace},
+    Fig.~5--6): a learned segmentation backbone, then QuAdGate corner extraction by LSD line intersection, then
+    PnP $\rightarrow$ EKF $\rightarrow$ controller. This is the \emph{same} pipeline our repository runs.
+\end{itemize}
+
+\FigSotaMap
+
+Two adjacent threads worth knowing: \textbf{NeRF-rendered training environments} (FalconGym \cite{miao2025falcongym} reports
+$95.8\,\%$ real-flight success and $10$\,cm crossing error on $38$\,cm-radius gates after training only in NeRF), and
+\textbf{foundation-model distillation} (MobileSAM \cite{zhang2023mobilesam} runs at $\sim$10\,ms with $5\times$ fewer
+parameters than FastSAM and $60\times$ fewer than SAM ViT-H, but no published drone-racing application). On loss design,
+the segmentation-loss survey of \cite{azad2023losses} catalogues 25 variants and treats Dice $+$ cross-entropy as a default
+for imbalanced binary masks --- the combo we already use.
+
+\subsection{Is what we have good?}
+
+\textbf{Yes, on paper. No, on real footage.} The architecture and loss choices are well-aligned with peer-reviewed practice.
+The failure mode is generalisation, not method.
+
+\begin{tcolorbox}[concept, title={What is right}]
+\begin{itemize}
+  \item \textbf{Hybrid target representation.} Ring-mask $+$ classical corner extraction is the same pipeline shape as the
+    A2RL champion's \cite{bahnam2026monorace}; geometrically it is the right place to stand for PnP-based pose recovery.
+  \item \textbf{Loss combo.} Dice $+$ $2{\times}$BCE matches the survey-recommended default for imbalanced binary
+    segmentation \cite{azad2023losses}.
+  \item \textbf{Deep supervision} on the GateNet variant is consistent with current evidence in segmentation literature
+    (the bottleneck head supplies a stable gradient when full-resolution heads start collapsing).
+  \item \textbf{SAM2 as a label refiner} (\code{configs/default.yaml:7}, \code{scripts/generate_sam_masks.py}) is an
+    underexplored angle --- no comparable published drone-racing work uses SAM2 this way. Potentially differentiating.
+\end{itemize}
+\end{tcolorbox}
+
+\begin{tcolorbox}[risk, title={What is leaving accuracy on the table}]
+\begin{itemize}
+  \item \textbf{ImageNet weights are off by default.} \code{configs/default.yaml:14} ships with \code{encoder_weights=None},
+    so ResNet-34 trains from scratch. A pretrained encoder is a free $\sim$5--10\,pp on imbalanced binary segmentation per
+    \cite{azad2023losses}.
+  \item \textbf{No ImageNet normalisation.} Pre-processing is BGR$\rightarrow$RGB and \code{/255} only
+    (\code{src/gate_detection/inference/predictor.py:175--177}); per-channel mean/std subtraction is not applied.
+    If we ever turn ImageNet weights on, this will silently undermine them.
+  \item \textbf{No keypoint auxiliary head.} The published podium entry \cite{azhari2025drift} trains keypoints jointly with
+    the bounding box at $0.971$ mAP. Our model regresses corners only via QuAdGate at inference, so we miss a strong
+    auxiliary signal during training.
+  \item \textbf{No PencilNet-style edge augmentation, no NeRF synthesis.} The two interventions with the strongest 2022--2025
+    real-world transfer evidence \cite{pham2022pencilnet, miao2025falcongym} are both absent. The 39\,\% on real footage is
+    consistent with that omission.
+\end{itemize}
+\end{tcolorbox}
+
+\begin{tcolorbox}[verified, title={Recommended next deltas, ordered by cost / benefit}]
+\begin{enumerate}[leftmargin=1.4em, label=\textbf{\arabic*.}]
+  \item Set \code{encoder_weights: imagenet} in \code{configs/default.yaml}, and add ImageNet mean/std normalisation in
+    the predictor. \emph{Cheap, large expected lift.}
+  \item Add a parallel keypoint-heatmap head (4 inner corners as Gaussian peaks); train multi-task with a small weight on
+    the existing mask loss. Pattern from \cite{azhari2025drift}.
+  \item Bake an edge-emphasising channel (PencilNet's morphological filter, \cite{pham2022pencilnet} Alg.~1) into the
+    offline augmentation pipeline as a fourth input channel; this is the cheapest sim-to-real intervention with published
+    real-flight evidence \cite{qiao2024continual}.
+  \item Distil SAM2's mask outputs into a small student backbone (e.g.\ MobileSAM-style, \cite{zhang2023mobilesam}) and
+    benchmark vs hand-labelled ring masks. Novel contribution if it works; clean fallback if it does not.
+\end{enumerate}
+\end{tcolorbox}
+
+% ─────────────────────────────────────────────────────────────────────────
+% 5. RECOMMENDED TRAINING STACK
 % ─────────────────────────────────────────────────────────────────────────
 \section{Recommended training stack}
 
