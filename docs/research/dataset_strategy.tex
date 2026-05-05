@@ -9,12 +9,23 @@
 % ─── geometry & layout ────────────────────────────────────────────────────
 \usepackage[a4paper, margin=2.4cm, top=2.6cm, bottom=2.6cm]{geometry}
 \usepackage{xcolor}
+% — text & background —
 \definecolor{ink}{HTML}{111111}
 \definecolor{paper}{HTML}{FFFFFF}
 \definecolor{muted}{HTML}{666666}
-\definecolor{accent}{HTML}{C9442B}     % deep coral, ETHRC-adjacent
 \definecolor{rule}{HTML}{DADADA}
-\definecolor{box}{HTML}{F6F4F1}        % warm light fill for callouts
+% — semantic accent palette (coral / teal / amber / forest) —
+\definecolor{coral}{HTML}{C9442B}      % primary highlight, recommendations
+\definecolor{coraltint}{HTML}{FBEAE3}  % soft fill for coral callouts
+\definecolor{teal}{HTML}{1F7A85}       % concepts, methods, pipelines
+\definecolor{tealtint}{HTML}{E3F1F3}
+\definecolor{amber}{HTML}{B97A1B}      % risks, warnings, open questions
+\definecolor{ambertint}{HTML}{F8EFDD}
+\definecolor{forest}{HTML}{3E7A52}     % verified, recommended, "do this"
+\definecolor{foresttint}{HTML}{E4EFE6}
+% legacy aliases used elsewhere in the file
+\colorlet{accent}{coral}
+\colorlet{box}{coraltint}
 \pagecolor{paper}
 \color{ink}
 
@@ -44,13 +55,26 @@
 
 % ─── callouts ─────────────────────────────────────────────────────────────
 \usepackage[most]{tcolorbox}
+% Default style (coral) used by \begin{tcolorbox}[title=...].
 \tcbset{
-  colback=box, colframe=accent, boxrule=0pt, leftrule=2.4pt,
+  colback=coraltint, colframe=coral, boxrule=0pt, leftrule=2.4pt,
   arc=0pt, outer arc=0pt,
-  fonttitle=\titlefont\bfseries\color{accent},
-  coltitle=accent,
+  fonttitle=\titlefont\bfseries\color{coral},
+  coltitle=coral,
   left=10pt, right=10pt, top=8pt, bottom=8pt,
   enhanced, breakable,
+}
+% Coloured semantic variants — invoke as
+%   \begin{tcolorbox}[concept,  title=...]
+%   \begin{tcolorbox}[risk,     title=...]
+%   \begin{tcolorbox}[verified, title=...]
+\tcbset{
+  concept/.style ={colback=tealtint,   colframe=teal,
+                   fonttitle=\titlefont\bfseries\color{teal},   coltitle=teal},
+  risk/.style    ={colback=ambertint,  colframe=amber,
+                   fonttitle=\titlefont\bfseries\color{amber},  coltitle=amber},
+  verified/.style={colback=foresttint, colframe=forest,
+                   fonttitle=\titlefont\bfseries\color{forest}, coltitle=forest},
 }
 
 % ─── lists ────────────────────────────────────────────────────────────────
@@ -60,7 +84,9 @@
 % ─── graphics & links ─────────────────────────────────────────────────────
 \usepackage{graphicx}
 \usepackage{tikz}
-\usetikzlibrary{calc}
+\usetikzlibrary{calc, arrows.meta, positioning, shapes.geometric, shapes.misc, fit, backgrounds, decorations.pathreplacing}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
 \usepackage[hidelinks]{hyperref}
 \hypersetup{
   colorlinks=true,
@@ -122,11 +148,195 @@
 
 % ─── misc ─────────────────────────────────────────────────────────────────
 \usepackage{microtype}
+\usepackage{xurl}                       % allow URL line-breaks at any character
 \setlength{\parskip}{0.5em}
 \setlength{\parindent}{0pt}
+\setlength{\emergencystretch}{1.6em}     % prevent overfull from rigid line breaks
+\hyphenpenalty=800
 
 \providecommand{\degree}{\textdegree}
-\newcommand{\code}[1]{{\monofont\small #1}}
+% \code{...} renders inline paths/identifiers in Sometype Mono and allows
+% line-breaks at any character — this is what kills overfull hboxes when a
+% long path lands at the end of a line.
+\DeclareUrlCommand{\code}{\urlstyle{tt}\monofont\small\color{ink}}
+
+% ─── figures ──────────────────────────────────────────────────────────────
+% Fig 1: Domain gap — twin bar charts side-by-side comparing detection rate
+% and reprojection error on the TII test split vs real recorded footage.
+\newcommand{\FigDomainGap}{%
+\begin{figure}[!ht]
+\centering
+\begin{tikzpicture}
+  \begin{axis}[
+    name=plotL, width=6.0cm, height=4.5cm,
+    ybar, bar width=0.65cm, enlarge x limits=0.45,
+    ymin=0, ymax=100,
+    ylabel={\footnotesize Detection rate (\%)},
+    ylabel style={yshift=-0.3em},
+    symbolic x coords={TII test, Real footage},
+    xtick=data,
+    nodes near coords,
+    nodes near coords style={font=\footnotesize\titlefont, color=ink},
+    every node near coord/.append style={anchor=south},
+    tick label style={font=\footnotesize},
+    axis line style={color=muted!60},
+    tick style={color=muted!60},
+    grid=major, major grid style={dashed, color=rule},
+    title={\titlefont\footnotesize\color{ink} Detection rate},
+  ]
+    \addplot[fill=teal!75,   draw=teal,  fill opacity=0.85] coordinates {(TII test,82)};
+    \addplot[fill=coral!75,  draw=coral, fill opacity=0.85] coordinates {(Real footage,39)};
+  \end{axis}
+  \begin{axis}[
+    at={(plotL.south east)}, anchor=south west, xshift=0.6cm,
+    width=6.0cm, height=4.5cm,
+    ybar, bar width=0.65cm, enlarge x limits=0.45,
+    ymin=0, ymax=40,
+    ylabel={\footnotesize Reprojection error (px)},
+    ylabel style={yshift=-0.3em},
+    symbolic x coords={TII test, Real footage},
+    xtick=data,
+    nodes near coords,
+    nodes near coords style={font=\footnotesize\titlefont, color=ink},
+    every node near coord/.append style={anchor=south},
+    tick label style={font=\footnotesize},
+    axis line style={color=muted!60},
+    tick style={color=muted!60},
+    grid=major, major grid style={dashed, color=rule},
+    title={\titlefont\footnotesize\color{ink} Mean reprojection error},
+  ]
+    \addplot[fill=teal!75,   draw=teal,  fill opacity=0.85] coordinates {(TII test,5.0)};
+    \addplot[fill=coral!75,  draw=coral, fill opacity=0.85] coordinates {(Real footage,30.7)};
+  \end{axis}
+\end{tikzpicture}
+\caption*{\footnotesize\textbf{Figure 1.} The domain gap that motivates this brief. Same checkpoint, two evaluation sets:
+the TII test split (teal) and our team's real recorded footage (coral). Detection rate halves and reprojection error grows
+$6\times$. Source numbers: \code{README.md} \S Known Issues, lines 31--48.}
+\label{fig:domain-gap}
+\end{figure}%
+}
+
+% Fig 2: Detection pipeline — RGB image -> segmentation -> mask ->
+% QuAdGate corner extraction -> PnP -> 6-DoF pose. Mirrors MonoRace Fig 5
+% \cite{bahnam2026monorace} and what our repo actually runs.
+\tikzset{
+  pipenode/.style ={draw, line width=0.7pt, rounded corners=2pt,
+                    minimum width=2.0cm, minimum height=1.0cm,
+                    align=center, font=\footnotesize, inner sep=4pt},
+  pipein/.style   ={pipenode, draw=muted, fill=rule!30, text=ink},
+  pipelearn/.style={pipenode, draw=coral, fill=coraltint, text=ink},
+  pipeclass/.style={pipenode, draw=teal,  fill=tealtint,  text=ink},
+  pipeout/.style  ={pipenode, draw=forest, fill=foresttint, text=ink},
+  pipearrow/.style={-{Stealth[length=4pt, width=4pt]}, line width=0.7pt, color=muted!90},
+}
+\newcommand{\FigPipeline}{%
+\begin{figure}[!ht]
+\centering
+\begin{tikzpicture}[node distance=0.55cm]
+  \node[pipein]    (img)  {RGB frame\\ \scriptsize $384{\times}384$};
+  \node[pipelearn, right=of img]  (seg)  {Segmentation\\ \scriptsize DeepLabV3$+$ / GateNet};
+  \node[pipeclass, right=of seg]  (mask) {Binary mask\\ \scriptsize gate ring};
+  \node[pipeclass, right=of mask] (corn) {QuAdGate\\ \scriptsize 8 sub-pixel corners};
+  \node[pipeout,   right=of corn] (pnp)  {PnP\\ \scriptsize 6-DoF pose};
+  \draw[pipearrow] (img)  -- (seg);
+  \draw[pipearrow] (seg)  -- (mask);
+  \draw[pipearrow] (mask) -- (corn);
+  \draw[pipearrow] (corn) -- (pnp);
+  % legend strip
+  \node[anchor=west, font=\scriptsize\color{muted}, inner sep=0pt] at ($(img.south west)+(0,-0.65cm)$)
+    {\textcolor{muted}{\rule[0.18ex]{0.5em}{0.5em}}\, input \hspace{0.6em}
+     \textcolor{coral}{\rule[0.18ex]{0.5em}{0.5em}}\, learned \hspace{0.6em}
+     \textcolor{teal}{\rule[0.18ex]{0.5em}{0.5em}}\, classical \hspace{0.6em}
+     \textcolor{forest}{\rule[0.18ex]{0.5em}{0.5em}}\, output};
+\end{tikzpicture}
+\caption*{\footnotesize\textbf{Figure 2.} The two-stage gate-detection pipeline used in this repo. The learned segmentation
+backbone runs once per frame; QuAdGate then extracts sub-pixel inner and outer corners by intersecting LSD line segments and
+matching descriptors. The structure mirrors the A2RL-winning MonoRace pipeline (Fig.~5 of~\cite{bahnam2026monorace}).}
+\label{fig:pipeline}
+\end{figure}%
+}
+
+% Fig 3: Three-tier evaluation pyramid — TII held-out (top, fastest),
+% real-footage benchmark (middle), on-site smoke test (bottom, definitive).
+\newcommand{\FigEvalTiers}{%
+\begin{figure}[!ht]
+\centering
+\begin{tikzpicture}[font=\footnotesize]
+  \def\rh{0.95}      % row height
+  \def\gap{0.05}     % gap between rows
+  % Tier 1 — narrowest band on top (cheap, fast feedback)
+  \fill[teal!85]   (-3.2,2*\rh+\gap)   rectangle ( 3.2,3*\rh+\gap);
+  \node[white, font=\footnotesize\bfseries] at (0,2.5*\rh+\gap) {Tier 1 \,\textbar\, TII held-out (split by autonomous / piloted)};
+  % Tier 2 — middle (slower, venue-relevant)
+  \fill[coral!85]  (-4.4,1*\rh)        rectangle ( 4.4,2*\rh);
+  \node[white, font=\footnotesize\bfseries] at (0,1.5*\rh) {Tier 2 \,\textbar\, hand-labelled real-footage benchmark};
+  % Tier 3 — widest at bottom (slowest, definitive)
+  \fill[forest!85] (-5.5,0)            rectangle ( 5.5,1*\rh-\gap);
+  \node[white, font=\footnotesize\bfseries] at (0,0.5*\rh-\gap/2) {Tier 3 \,\textbar\, on-site smoke test vs.\ frozen checkpoint};
+  % side annotations: speed (left), cost (right)
+  \draw[-{Stealth[length=4pt]}, color=muted!85, line width=0.6pt]
+       (-6.3,0) -- (-6.3,3*\rh+\gap) node[midway, sloped, above, color=muted, font=\scriptsize] {fewer false-negatives};
+  \draw[-{Stealth[length=4pt]}, color=muted!85, line width=0.6pt]
+       (6.3,3*\rh+\gap) -- (6.3,0) node[midway, sloped, above, color=muted, font=\scriptsize] {higher cost / latency};
+\end{tikzpicture}
+\caption*{\footnotesize\textbf{Figure 3.} Three-tier evaluation. Each tier catches failure modes the cheaper one cannot:
+TII held-out catches segmentation regressions; the real-footage benchmark catches the domain shift the brief is built around;
+the on-site smoke test catches venue-specific surprises. A checkpoint advances only after all three pass.}
+\label{fig:eval-tiers}
+\end{figure}%
+}
+
+% Fig 4: Fine-tuning protocol — frozen encoder, tunable decoder + last 2
+% conv blocks, with a 1:1 rehearsal mini-batch from TII to prevent
+% catastrophic forgetting (rationale: \cite{qiao2024continual}).
+\newcommand{\FigFineTune}{%
+\begin{figure}[!ht]
+\centering
+\begin{tikzpicture}[
+  font=\footnotesize,
+  layer/.style={draw, rounded corners=1pt, minimum width=1.0cm, minimum height=0.9cm, align=center, inner sep=2pt},
+  frozen/.style={layer, draw=muted!80, fill=rule!40, text=muted},
+  tunable/.style={layer, draw=coral, fill=coraltint, text=ink, line width=0.7pt},
+  databox/.style={draw, rounded corners=2pt, align=center, font=\footnotesize, inner sep=4pt, minimum height=0.9cm},
+]
+  % network: encoder (4 frozen layers) + decoder (4 tunable layers) + head
+  \node[frozen]                (e1)                {ResBlk\\ \scriptsize frozen};
+  \node[frozen, right=0.15cm of e1]  (e2)          {ResBlk\\ \scriptsize frozen};
+  \node[frozen, right=0.15cm of e2]  (e3)          {ResBlk\\ \scriptsize frozen};
+  \node[frozen, right=0.15cm of e3]  (e4)          {ResBlk\\ \scriptsize frozen};
+  \node[tunable, right=0.55cm of e4] (d1)          {Conv$\uparrow$\\ \scriptsize update};
+  \node[tunable, right=0.15cm of d1] (d2)          {Conv$\uparrow$\\ \scriptsize update};
+  \node[tunable, right=0.15cm of d2] (d3)          {Conv$\uparrow$\\ \scriptsize update};
+  \node[tunable, right=0.15cm of d3] (head)        {Mask\\ head};
+  % connecting arrows along network
+  \draw[-{Stealth[length=3pt]}, color=muted] (e1) -- (e2);
+  \draw[-{Stealth[length=3pt]}, color=muted] (e2) -- (e3);
+  \draw[-{Stealth[length=3pt]}, color=muted] (e3) -- (e4);
+  \draw[-{Stealth[length=3pt]}, color=muted] (e4) -- (d1);
+  \draw[-{Stealth[length=3pt]}, color=muted] (d1) -- (d2);
+  \draw[-{Stealth[length=3pt]}, color=muted] (d2) -- (d3);
+  \draw[-{Stealth[length=3pt]}, color=muted] (d3) -- (head);
+  % rehearsal mini-batch: two coloured sources flowing into encoder
+  \node[databox, draw=teal,  fill=tealtint,  below=1.0cm of e1, xshift=-0.2cm] (compdata) {Competition\\ frames\\ \scriptsize (new)};
+  \node[databox, draw=coral, fill=coraltint, below=1.0cm of e2, xshift=0.2cm] (tiidata)  {TII rehearsal\\ \scriptsize (1:1 mix)};
+  \draw[-{Stealth[length=4pt]}, color=teal,  line width=0.7pt] (compdata.north) -- ($(e1.south)+(0.2,0)$);
+  \draw[-{Stealth[length=4pt]}, color=coral, line width=0.7pt] (tiidata.north)  -- ($(e2.south)+(-0.2,0)$);
+  % loss block on the right
+  \node[databox, draw=forest, fill=foresttint, right=0.5cm of head] (loss) {Dice $+$ BCE\\ \scriptsize joint loss};
+  \draw[-{Stealth[length=4pt]}, color=forest, line width=0.7pt] (head.east) -- (loss.west);
+  % brace labels
+  \draw[decorate, decoration={brace, mirror, amplitude=4pt}, color=muted!80]
+        (e1.south west)+(0,-0.05) -- node[below, midway, color=muted, font=\scriptsize, yshift=-0.2em]{encoder (frozen)} ($(e4.south east)+(0,-0.05)$);
+  \draw[decorate, decoration={brace, mirror, amplitude=4pt}, color=coral!80]
+        (d1.south west)+(0,-0.05) -- node[below, midway, color=coral, font=\scriptsize, yshift=-0.2em]{decoder $+$ head (tunable)} ($(head.south east)+(0,-0.05)$);
+\end{tikzpicture}
+\caption*{\footnotesize\textbf{Figure 4.} Fine-tuning protocol. Encoder weights are frozen; only the decoder and the mask head
+update, at $0.1\times$ the original learning rate. Each batch mixes new competition frames with TII rehearsal samples 1:1, an
+explicit guard against catastrophic forgetting --- the failure mode~\cite{qiao2024continual} reports for naïve sequential
+fine-tuning under shifting illumination.}
+\label{fig:finetune}
+\end{figure}%
+}
 
 \begin{document}
 
@@ -158,7 +368,7 @@
 \section*{TL;DR}
 \addcontentsline{toc}{section}{TL;DR}
 
-The current ETHRC gate detector reaches 82\,\% detection rate on the TII drone-racing test split but collapses to 39\,\% on real recorded footage; PnP reprojection error rises from 5.0\,px to 30.7\,px over the same shift~\cite{tii2025dataset}.\footnote{Numbers from \code{DroneRacing\_GateDetection/README.md} \S Known Issues (lines 31--53); the same file declares real-data fine-tuning as ``Not Done''.} The 2026 season targets two competitions whose gates are not represented in our training data: \textbf{A2RL} (1.5\,m square gates, indoor 100$\times$30\,m hall, no team-supplied dataset)~\cite{bahnam2026monorace} and \textbf{The AI Grand Prix} (Neros standardised hardware, simulator-driven qualifier, finals in Ohio Nov 2026)~\cite{aigrandprix}. Closing the gap demands more than retraining on more TII data.
+The current ETHRC gate detector reaches 82\,\% detection rate on the TII drone-racing test split but collapses to 39\,\% on real recorded footage; PnP reprojection error rises from 5.0\,px to 30.7\,px over the same shift~\cite{tii2025dataset}.\footnote{Numbers from \code{DroneRacing_GateDetection/README.md} \S Known Issues (lines 31--53); the same file declares real-data fine-tuning as ``Not Done''.} The 2026 season targets two competitions whose gates are not represented in our training data: \textbf{A2RL} (1.5\,m square gates, indoor 100$\times$30\,m hall, no team-supplied dataset)~\cite{bahnam2026monorace} and \textbf{The AI Grand Prix} (Neros standardised hardware, simulator-driven qualifier, finals in Ohio Nov 2026)~\cite{aigrandprix}. Closing the gap demands more than retraining on more TII data.
 
 \begin{tcolorbox}[title=Recommendations at a glance]
 \begin{tabularx}{\linewidth}{@{} L{3.5cm} X @{}}
@@ -183,9 +393,13 @@ Competition-data collection & 5--10\,min FPV footage of the actual competition g
 
 The repository's two-stage gate detector (DeepLabV3+ or a custom GateNet U-Net, followed by the QuAdGate sub-pixel corner extractor) is trained end-to-end on the TII drone-racing dataset~\cite{tii2025dataset}. On the held-out TII split the segmentation model achieves $\sim$82\,\% detection with mean reprojection error 5.0\,px. On a separately recorded real-world flight using the same drone hardware, detection collapses to 39\,\% and reprojection error climbs to 30.7\,px. The README itself lists the consequences as a known issue: the model ``segments non-gate regions as gates,'' degrading both detection and PnP pose estimation.\footnote{\code{README.md:48}.}
 
+\FigDomainGap
+
 This is the textbook \emph{domain shift} problem in drone-racing perception: training data is dominated by one environment and one gate appearance, and the network specialises rather than generalises. \cite{qiao2024continual} document the same effect under nothing more than illumination change in a controlled drone arena, and propose a continual-learning rehearsal scheme to mitigate forgetting across lighting conditions.
 
 A2RL and The AI Grand Prix shift the domain twice: first through different gate geometry and material (1.5\,m powder-coated frames at A2RL; not-yet-published gates at AIGP), then through different camera intrinsics (rolling-shutter 820$\times$616 monocular at A2RL~\cite{bahnam2026monorace}; $\sim$12\,MP wide-angle on the Neros airframe at AIGP~\cite{aigrandprix}). Without a deliberate plan, the 39\,\%-detection regime is the most plausible outcome at competition.
+
+\FigPipeline
 
 % ─────────────────────────────────────────────────────────────────────────
 % 2. COMPETITION SPECIFICATIONS
@@ -259,11 +473,11 @@ AlphaPilot 2019 & 2019 & Real & 28\,k images, bbox + corner keypoints & \textbf{
 % ─────────────────────────────────────────────────────────────────────────
 \section{Recommended training stack}
 
-\textbf{Primary corpus.} TII v3.0.0~\cite{tii2025dataset}, already wired through \code{src/gate\_detection/data/discovery.py} (28 train / 8 val flights, deterministic split with \code{random.seed(42)}).
+\textbf{Primary corpus.} TII v3.0.0~\cite{tii2025dataset}, already wired through \code{src/gate_detection/data/discovery.py} (28 train / 8 val flights, deterministic split with \code{random.seed(42)}).
 
 \textbf{Synthetic supplement.} Render A2RL-spec 1.5\,m / 2.7\,m square gates in the AirSim NeurIPS-2019 environments~\cite{microsoft2019airsim} via the existing object-pose API, scripting random gate placement / pose / scale and reading back ground-truth corners through \code{simSetSegmentationObjectID}. The repository's offline augmentation pipeline (\code{data/synthesis.py}) already composites gates onto Places365 backgrounds; the AirSim renders extend the same logic to physically plausible camera poses.
 
-\textbf{Background pool.} The existing \code{scripts/download\_backgrounds.py} pull from \texttt{Andron00e/Places365-custom} on Hugging Face is sufficient for general indoor diversity. Before each competition we should additionally photograph 30--50 venue-style background frames (no gates) to push the offline augmenter toward the actual lighting and clutter we will see.
+\textbf{Background pool.} The existing \code{scripts/download_backgrounds.py} pull from the Places365-custom set on Hugging Face is sufficient for general indoor diversity. Before each competition we should additionally photograph 30--50 venue-style background frames (no gates) to push the offline augmenter toward the actual lighting and clutter we will see.
 
 \textbf{Loss \& head.} No change. Deep-supervised Dice + BCE on the segmentation backbone, QuAdGate corner extraction post-hoc; the documented architecture in \code{docs/architecture.md} stays.
 
@@ -273,6 +487,8 @@ AlphaPilot 2019 & 2019 & Real & 28\,k images, bbox + corner keypoints & \textbf{
 \section{Testing tactic}
 
 \textbf{Failure mode to design against:} a checkpoint that reports 82\,\% on the TII test split but collapses on real footage. The current evaluation reports a single TII number and is therefore blind to that collapse until the drone is in the air. The fix is to run three independent evaluations on every candidate checkpoint, in this order:
+
+\FigEvalTiers
 
 \subsection{Tier 1: TII held-out, split by mode}
 
@@ -328,25 +544,31 @@ For each competition, before the first scored run:
   \item Stop early: ``best on competition split, no regression on TII val'' is the joint criterion. If the joint criterion cannot be satisfied within 10 epochs, the dataset is too small or too biased; collect more, do not train longer.
 \end{itemize}
 
+\FigFineTune
+
 \subsection{Validation gate before deployment}
 
-A fine-tuned checkpoint may only replace the deployed one if all three Tier criteria pass:
-
-\begin{enumerate}
-  \item TII val: no $>$2\,pp regression on either flight mode.
-  \item Real-footage benchmark: detection rate $\geq$60\,\%, reprojection within 2$\times$ TII.
-  \item On-site smoke test: no novel false-positive class.
+\begin{tcolorbox}[verified, title={Three-tier go/no-go before any new checkpoint replaces the deployed one}]
+\begin{enumerate}[leftmargin=1.4em, label=\textbf{\arabic*.}]
+  \item \textbf{TII val} \,---\, no $>$2\,pp IoU regression on either autonomous-only or piloted-only.
+  \item \textbf{Real-footage benchmark} \,---\, detection rate $\geq$60\,\%, reprojection error within 2$\times$ the TII number.
+  \item \textbf{On-site smoke test} \,---\, no novel false-positive class beyond the offline benchmark.
 \end{enumerate}
+\textit{All three must pass.} A regression on \emph{any} tier is an automatic abort to the previous checkpoint.
+\end{tcolorbox}
 
 % ─────────────────────────────────────────────────────────────────────────
 % 7. RISKS & OPEN QUESTIONS
 % ─────────────────────────────────────────────────────────────────────────
 \section{Risks \& open questions}
 
+\begin{tcolorbox}[risk, title={Highest-priority risk: fix before any dataset work shows up in pose accuracy}]
+The \textbf{45.6\degree\ rotation error vs.\ VICON} reported in \code{README.md:38--42} is too large to be a detector failure alone --- it strongly suggests a coordinate-frame sign or extrinsics bug in the PnP stage. Even a perfect detector cannot recover that. Treat it as an independent workstream that gates everything downstream.
+\end{tcolorbox}
+
 \begin{itemize}
   \item \textbf{A2RL gate appearance unconfirmed.} We have geometry from~\cite{bahnam2026monorace}, but colour, surface finish, and reflectivity are not pinned. Plan for a worst-case white powder-coated frame against grey concrete: the failure mode where every wall edge looks gate-like. Confirm against ASPIRE technical bulletins as soon as 2026 specs are published.
   \item \textbf{AIGP camera intrinsics.} The Neros camera differs from the TII rig; we should ingest a Round-1 simulator frame as soon as the May 2026 release lands and re-run undistortion against our intrinsics file.
-  \item \textbf{PnP rotation error of 45.6\degree\ in the README} (\code{README.md:38--42}) is too large to be a detector failure alone; it suggests a frame-axis sign or extrinsics bug in the PnP stage that is independent of, and must be fixed before, dataset work shows up in pose accuracy. Treat as a separate workstream.
   \item \textbf{No public AlphaPilot dataset} despite multiple writeups citing one. Our plan must not depend on access; the synthesis pipeline plus on-site collection has to be sufficient on its own.
   \item \textbf{Compute budget for synthetic rendering.} The AirSim repository is archived and unmaintained; if it breaks under macOS / current Unreal builds, falling back to a NeRF-based render of an A2RL-spec gate is a reasonable plan B but requires effort not yet scoped.
 \end{itemize}
