@@ -237,3 +237,6 @@ aws-credentials*
 *.pem
 .env
 .env.*
+
+# Local dataset downloads
+datasets/
