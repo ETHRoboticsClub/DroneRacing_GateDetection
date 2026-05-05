@@ -442,7 +442,7 @@ QuAdGate's LSD line-segment matcher needs.}
   }
   \draw[arr] (e0) -- (e1); \draw[arr] (e1) -- (e2); \draw[arr] (e2) -- (e3); \draw[arr] (e3) -- (e4);
   \draw[arr] (e4) -- (u1); \draw[arr] (u1) -- (u2); \draw[arr] (u2) -- (u3); \draw[arr] (u3) -- (u4);
-  \node[anchor=west, font=\tiny\color{muted}] at (-0.5, -0.85) {channel divisor $f=4$ \,$\Rightarrow$\, [16,32,64,128,128] \,/\, deep-supervision weights $(4,2,1,1,1)$ \,/\, only $y_4$ is used at deployment};
+  \node[anchor=west, font=\tiny\color{muted}, text width=15.5cm] at (-0.5, -0.85) {channel divisor $f=4$ \,$\Rightarrow$\, [16,32,64,128,128] \,/\, deep-supervision weights $(4,2,1,1,1)$ \,/\, only $y_4$ is used at deployment};
   % --- ROW 2 : DeepLabV3+ -----------------------------------------------
   \node[font=\footnotesize\titlefont\bfseries, anchor=west] at (-0.5, -2.0) {DeepLabV3+ (smp wrapper)};
   \node[encblk, minimum width=2.7cm] (rn) at (1.0, -2.9) {ResNet-34 encoder\\\tiny ImageNet (optional)};
@@ -450,7 +450,7 @@ QuAdGate's LSD line-segment matcher needs.}
   \node[decblk, minimum width=1.4cm] (dec) at (5.5, -2.9) {decoder};
   \node[headblk, minimum width=0.85cm, minimum height=0.55cm] (head) at (7.0, -2.9) {head\\\tiny w=1};
   \draw[arr] (rn) -- (aspp); \draw[arr] (aspp) -- (dec); \draw[arr] (dec) -- (head);
-  \node[anchor=west, font=\tiny\color{muted}] at (-0.5, -3.7) {single-scale Dice\,+\,2.0$\times$BCE \,/\, ResNet-34 ImageNet weights are \emph{available} but \code{encoder_weights=None} in \code{configs/default.yaml}};
+  \node[anchor=west, font=\tiny\color{muted}, text width=15.5cm] at (-0.5, -3.7) {single-scale Dice\,+\,2.0$\times$BCE \,/\, ResNet-34 ImageNet weights available but disabled by default (\code{encoder_weights=None} in \code{models/deeplabv3plus.py:14})};
   % legend
   \node[anchor=west, font=\tiny] at (-0.5, -4.4)
     {\textcolor{teal}{\rule[0.18ex]{0.45em}{0.45em}}\, encoder \hspace{0.5em}
@@ -665,11 +665,12 @@ The training mask is then ``fill outer polygon, erase inner polygon'' (\code{src
 
 \FigRingMask
 
-The ring exists for QuAdGate. The downstream corner extractor finds Line-Segment-Detector edges, intersects them inside the
-mask, and matches the intersections by a small descriptor learned alongside the segmentation backbone --- a strategy mirrored
-in MonoRace's competition-winning A2RL pipeline (\cite{bahnam2026monorace}, Fig.~5--6). A filled quadrilateral target would
-remove that signal; the ring is therefore not an aesthetic choice, it is the right supervision shape for a PnP-driven
-geometry-first detector.
+The ring exists for QuAdGate. The downstream corner extractor (\code{src/gate_detection/postprocessing/quadgate.py}) runs
+OpenCV's Line Segment Detector on the binary mask, intersects line pairs inside the ring, and classifies each intersection
+into a corner type (TL/TR/BR/BL) by matching a 4-bit local mask sample against fixed hand-crafted prior bit patterns
+(\code{quadgate.py:32--35}). MonoRace, the A2RL April 2025 champion, runs the same overall recipe (\cite{bahnam2026monorace},
+Fig.~5--6). A filled quadrilateral target would erase the ring boundary the line-detector keys on; the ring is therefore
+not an aesthetic choice, it is the right supervision shape for a PnP-driven geometry-first detector.
 
 \subsection{What we have today}
 
@@ -682,7 +683,8 @@ geometry-first detector.
     $(4, 2, 1, 1, 1)$ (\code{losses/segmentation.py:30--34}).
   \item \textbf{DeepLabV3+} (\code{models/deeplabv3plus.py:11--37}): \texttt{segmentation\_models\_pytorch} wrapper, ResNet-34
     encoder, ASPP atrous-rate dilation, single sigmoid head. The \code{encoder_weights} flag accepts \texttt{"imagenet"} but
-    is set to \texttt{None} by default in \code{configs/default.yaml:14}, so ResNet-34 currently trains from scratch.
+    defaults to \texttt{None} in \code{models/deeplabv3plus.py:14}, and \code{configs/default.yaml} does not override it,
+    so ResNet-34 currently trains from scratch.
 \end{itemize}
 
 \FigArchCompare
@@ -733,8 +735,8 @@ Two adjacent threads worth knowing: \textbf{NeRF-rendered training environments}
 $95.8\,\%$ real-flight success and $10$\,cm crossing error on $38$\,cm-radius gates after training only in NeRF), and
 \textbf{foundation-model distillation} (MobileSAM \cite{zhang2023mobilesam} runs at $\sim$10\,ms with $5\times$ fewer
 parameters than FastSAM and $60\times$ fewer than SAM ViT-H, but no published drone-racing application). On loss design,
-the segmentation-loss survey of \cite{azad2023losses} catalogues 25 variants and treats Dice $+$ cross-entropy as a default
-for imbalanced binary masks --- the combo we already use.
+the segmentation-loss survey of \cite{azad2023losses} catalogues 25 variants of binary-segmentation losses, with Dice and
+cross-entropy among the canonical building blocks --- the combo we already use.
 
 \subsection{Is what we have good?}
 
@@ -745,8 +747,8 @@ The failure mode is generalisation, not method.
 \begin{itemize}
   \item \textbf{Hybrid target representation.} Ring-mask $+$ classical corner extraction is the same pipeline shape as the
     A2RL champion's \cite{bahnam2026monorace}; geometrically it is the right place to stand for PnP-based pose recovery.
-  \item \textbf{Loss combo.} Dice $+$ $2{\times}$BCE matches the survey-recommended default for imbalanced binary
-    segmentation \cite{azad2023losses}.
+  \item \textbf{Loss combo.} Dice $+$ $2{\times}$BCE pairs two canonical segmentation losses catalogued in the survey of
+    \cite{azad2023losses}; the Dice term anchors region overlap, the BCE term keeps gradients well-behaved on the long ring boundary.
   \item \textbf{Deep supervision} on the GateNet variant is consistent with current evidence in segmentation literature
     (the bottleneck head supplies a stable gradient when full-resolution heads start collapsing).
   \item \textbf{SAM2 as a label refiner} (\code{configs/default.yaml:7}, \code{scripts/generate_sam_masks.py}) is an
@@ -756,9 +758,9 @@ The failure mode is generalisation, not method.
 
 \begin{tcolorbox}[risk, title={What is leaving accuracy on the table}]
 \begin{itemize}
-  \item \textbf{ImageNet weights are off by default.} \code{configs/default.yaml:14} ships with \code{encoder_weights=None},
-    so ResNet-34 trains from scratch. A pretrained encoder is a free $\sim$5--10\,pp on imbalanced binary segmentation per
-    \cite{azad2023losses}.
+  \item \textbf{ImageNet weights are off by default.} \code{models/deeplabv3plus.py:14} sets
+    \code{encoder_weights=None} and \code{configs/default.yaml} does not override it, so ResNet-34 trains from scratch.
+    Turning ImageNet weights on is one of the cheapest accuracy levers available for a binary segmentation backbone.
   \item \textbf{No ImageNet normalisation.} Pre-processing is BGR$\rightarrow$RGB and \code{/255} only
     (\code{src/gate_detection/inference/predictor.py:175--177}); per-channel mean/std subtraction is not applied.
     If we ever turn ImageNet weights on, this will silently undermine them.
@@ -778,8 +780,8 @@ The failure mode is generalisation, not method.
   \item Add a parallel keypoint-heatmap head (4 inner corners as Gaussian peaks); train multi-task with a small weight on
     the existing mask loss. Pattern from \cite{azhari2025drift}.
   \item Bake an edge-emphasising channel (PencilNet's morphological filter, \cite{pham2022pencilnet} Alg.~1) into the
-    offline augmentation pipeline as a fourth input channel; this is the cheapest sim-to-real intervention with published
-    real-flight evidence \cite{qiao2024continual}.
+    offline augmentation pipeline as a fourth input channel; the same filter has subsequent real-flight illumination-robustness
+    evidence in the continual-learning extension of \cite{qiao2024continual}.
   \item Distil SAM2's mask outputs into a small student backbone (e.g.\ MobileSAM-style, \cite{zhang2023mobilesam}) and
     benchmark vs hand-labelled ring masks. Novel contribution if it works; clean fallback if it does not.
 \end{enumerate}
