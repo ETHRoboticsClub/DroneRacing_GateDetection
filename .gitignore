@@ -240,3 +240,15 @@ aws-credentials*
 
 # Local dataset downloads
 datasets/
+
+# LaTeX build artefacts (research docs)
+docs/research/build/
+docs/research/*.aux
+docs/research/*.log
+docs/research/*.out
+docs/research/*.toc
+docs/research/*.bbl
+docs/research/*.blg
+docs/research/*.fls
+docs/research/*.fdb_latexmk
+docs/research/*.synctex.gz

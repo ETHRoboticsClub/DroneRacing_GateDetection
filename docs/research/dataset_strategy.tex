@@ -1,0 +1,308 @@
+\documentclass[11pt,a4paper]{article}
+
+% ─── fonts ────────────────────────────────────────────────────────────────
+\usepackage{fontspec}
+\setmainfont{Inter}
+\newfontfamily\titlefont{Sometype Mono}
+\newfontfamily\monofont{Sometype Mono}
+
+% ─── geometry & layout ────────────────────────────────────────────────────
+\usepackage[a4paper, margin=2.4cm, top=2.6cm, bottom=2.6cm]{geometry}
+\usepackage{xcolor}
+\definecolor{ink}{HTML}{111111}
+\definecolor{paper}{HTML}{FFFFFF}
+\definecolor{muted}{HTML}{666666}
+\definecolor{accent}{HTML}{C9442B}     % deep coral, ETHRC-adjacent
+\definecolor{rule}{HTML}{DADADA}
+\definecolor{box}{HTML}{F6F4F1}        % warm light fill for callouts
+\pagecolor{paper}
+\color{ink}
+
+% ─── titles ───────────────────────────────────────────────────────────────
+\usepackage{titlesec}
+\titleformat{\section}
+  {\titlefont\Large\bfseries\color{ink}}{\thesection}{0.6em}{}[\vspace{-0.4em}\textcolor{rule}{\hrule height 0.6pt}]
+\titleformat{\subsection}
+  {\titlefont\large\bfseries\color{ink}}{\thesubsection}{0.5em}{}
+\titlespacing*{\section}{0pt}{1.6em}{0.6em}
+\titlespacing*{\subsection}{0pt}{1.0em}{0.3em}
+
+% ─── headers / footers ────────────────────────────────────────────────────
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt}
+\fancyfoot[L]{{\titlefont\footnotesize ETH ROBOTICS CLUB}}
+\fancyfoot[R]{{\titlefont\footnotesize \thepage}}
+\fancyfoot[C]{{\titlefont\footnotesize\color{muted}DATASET STRATEGY \,|\, GATE DETECTION}}
+
+% ─── tables ───────────────────────────────────────────────────────────────
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+% ─── callouts ─────────────────────────────────────────────────────────────
+\usepackage[most]{tcolorbox}
+\tcbset{
+  colback=box, colframe=accent, boxrule=0pt, leftrule=2.4pt,
+  arc=0pt, outer arc=0pt,
+  fonttitle=\titlefont\bfseries\color{accent},
+  coltitle=accent,
+  left=10pt, right=10pt, top=8pt, bottom=8pt,
+  enhanced, breakable,
+}
+
+% ─── lists ────────────────────────────────────────────────────────────────
+\usepackage{enumitem}
+\setlist{leftmargin=1.2em, topsep=0.3em, itemsep=0.2em, parsep=0pt}
+
+% ─── graphics & links ─────────────────────────────────────────────────────
+\usepackage{graphicx}
+\usepackage[hidelinks]{hyperref}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=ink,
+  urlcolor=accent,
+  citecolor=ink,
+}
+
+% ─── bibliography ─────────────────────────────────────────────────────────
+\usepackage[backend=biber,style=numeric-comp,sorting=none,maxbibnames=4]{biblatex}
+\addbibresource{refs.bib}
+
+% ─── misc ─────────────────────────────────────────────────────────────────
+\usepackage{microtype}
+\setlength{\parskip}{0.5em}
+\setlength{\parindent}{0pt}
+
+\providecommand{\degree}{\textdegree}
+\newcommand{\code}[1]{{\monofont\small #1}}
+
+\begin{document}
+
+% ─────────────────────────────────────────────────────────────────────────
+% COVER
+% ─────────────────────────────────────────────────────────────────────────
+\thispagestyle{empty}
+\begin{center}
+\vspace*{2.5cm}
+\includegraphics[width=0.55\linewidth]{media/logos/ETHRC_primaryblack.pdf}\\[2.4cm]
+{\titlefont\Huge\bfseries Dataset \& Training Strategy}\\[0.5em]
+{\titlefont\Huge\bfseries for FPV Drone Racing}\\[0.5em]
+{\titlefont\Huge\bfseries Gate Detection}\\[2cm]
+{\large A research brief for the ETHRC Aeronautics gate-detection model}\\[0.5em]
+{\large targeting A2RL and The AI Grand Prix, 2026 season.}\\[3cm]
+\textcolor{rule}{\rule{4cm}{0.6pt}}\\[0.6em]
+{\titlefont\small Version 0.1 \,\textbar\, \today \,\textbar\, ETHRC Internal}\\[0.4em]
+{\titlefont\small Aeronautics \,\textbar\, Perception working group}
+\vfill
+{\titlefont\footnotesize\color{muted}ETH ROBOTICS CLUB \,\textbar\, INTERNAL}
+\end{center}
+\clearpage
+
+% ─────────────────────────────────────────────────────────────────────────
+% TL;DR
+% ─────────────────────────────────────────────────────────────────────────
+\section*{TL;DR}
+\addcontentsline{toc}{section}{TL;DR}
+
+The current ETHRC gate detector reaches 82\,\% detection rate on the TII drone-racing test split but collapses to 39\,\% on real recorded footage; PnP reprojection error rises from 5.0\,px to 30.7\,px over the same shift~\cite{tii2025dataset}.\footnote{Numbers from \code{DroneRacing\_GateDetection/README.md} \S Known Issues (lines 31--53); the same file declares real-data fine-tuning as ``Not Done''.} The 2026 season targets two competitions whose gates are not represented in our training data --- \textbf{A2RL} (1.5\,m square gates, indoor 100$\times$30\,m hall, no team-supplied dataset)~\cite{bahnam2026monorace} and \textbf{The AI Grand Prix} (Neros standardised hardware, simulator-driven qualifier, finals in Ohio Nov 2026)~\cite{aigrandprix}. Closing the gap demands more than retraining on more TII data.
+
+\begin{tcolorbox}[title=Recommendations at a glance]
+\begin{tabularx}{\linewidth}{@{} L{3.5cm} X @{}}
+\toprule
+\textbf{Decision} & \textbf{Recommendation} \\
+\midrule
+Primary training data & Stay on TII v3.0.0~\cite{tii2025dataset} (already wired). \\
+Supplementary synthetic & Render A2RL-spec 1.5\,m gates in the AirSim NeurIPS-2019 environments~\cite{microsoft2019airsim}; layer onto the existing Places365 background pool. \\
+Held-out evaluation & Three-tier: (i) TII val/test, (ii) hand-labelled team footage, (iii) on-site smoke test against a frozen pre-deployment checkpoint. \\
+Fine-tune trigger & When team footage is available; freeze encoder, train decoder $+$ last 2 conv blocks; gate on ``no regression on TII val.'' \\
+Competition-data collection & 5--10\,min FPV footage of the actual competition gate from $\geq$3 angles and 2 lighting conditions before each event. \\
+\bottomrule
+\end{tabularx}
+\end{tcolorbox}
+
+\clearpage
+
+% ─────────────────────────────────────────────────────────────────────────
+% 1. PROBLEM STATEMENT
+% ─────────────────────────────────────────────────────────────────────────
+\section{Problem statement}
+
+The repository's two-stage gate detector (DeepLabV3+ or a custom GateNet U-Net, followed by the QuAdGate sub-pixel corner extractor) is trained end-to-end on the TII drone-racing dataset~\cite{tii2025dataset}. On the held-out TII split the segmentation model achieves $\sim$82\,\% detection with mean reprojection error 5.0\,px. On a separately recorded real-world flight using the same drone hardware, detection collapses to 39\,\% and reprojection error climbs to 30.7\,px. The README itself lists the consequences as a known issue: the model ``segments non-gate regions as gates,'' degrading both detection and PnP pose estimation.\footnote{\code{README.md:48}.}
+
+This is the textbook \emph{domain shift} problem in drone-racing perception: training data is dominated by one environment and one gate appearance, and the network specialises rather than generalises. \cite{qiao2024continual} document the same effect under nothing more than illumination change in a controlled drone arena, and propose a continual-learning rehearsal scheme to mitigate forgetting across lighting conditions.
+
+A2RL and The AI Grand Prix shift the domain twice: first through different gate geometry and material (1.5\,m powder-coated frames at A2RL; not-yet-published gates at AIGP), then through different camera intrinsics (rolling-shutter 820$\times$616 monocular at A2RL~\cite{bahnam2026monorace}; $\sim$12\,MP wide-angle on the Neros airframe at AIGP~\cite{aigrandprix}). Without a deliberate plan, the 39\,\%-detection regime is the most plausible outcome at competition.
+
+% ─────────────────────────────────────────────────────────────────────────
+% 2. COMPETITION SPECIFICATIONS
+% ─────────────────────────────────────────────────────────────────────────
+\section{Competition specifications}
+
+\subsection{A2RL \textemdash{} Abu Dhabi Autonomous Racing League}
+
+The April 2025 edition was held over 11--12 April 2025 at ADNEC, Abu Dhabi. Authoritative specs are documented by the winning team~\cite{bahnam2026monorace}:
+
+\begin{itemize}
+  \item Track: 11 square gates, $1.5$\,m inner opening, $2.7$\,m outer frame, in a $100\times30$\,m hall (track itself $76\times18\times5.4$\,m).
+  \item Drone: 966\,g, NVIDIA Jetson Orin NX companion + STM32H743 flight controller; monocular rolling-shutter CMOS at $820\times616$, FoV $155\degree\times115\degree$; 1\,kHz/2\,kHz IMU.
+  \item Provided to teams: \emph{none} --- no pre-recorded dataset and no official simulator. Teams developed synthetic data and gym environments themselves~\cite{bahnam2026monorace}.
+  \item Best result reported: peak 28.23\,m/s ($\approx$\,100\,km/h), fastest lap 16.56\,s.
+  \item 2026 edition: announced; \$1\,M prize pool~\cite{a2rl}.
+\end{itemize}
+
+The lack of an official dataset is the most consequential fact in this section. It implies that \emph{any} team's training material has to be either (a) collected on-site during the limited practice days, or (b) synthesised against the published gate geometry. Both paths are expected; we should plan for both.
+
+\subsection{The AI Grand Prix}
+
+Per the official site~\cite{aigrandprix}, the 2026 season is structured as:
+
+\begin{itemize}
+  \item \textbf{Virtual qualifier 1} --- May to early July, sparse gates, desaturated environment, gates visually highlighted.
+  \item \textbf{Virtual qualifier 2} --- late July, real 3D-scanned environment, more gates.
+  \item \textbf{Physical qualifier} --- September 2026, Southern California, two-week training window. Indoor, ``consistent lighting''; no wind.
+  \item \textbf{Finals} --- November 2026, Ohio. Indoor; possible additional disturbances from spectator camera flashes.
+  \item Hardware: Neros standardised drone, $\sim$12\,MP wide-angle FPV monocular, $\sim$100\,TOPS onboard compute, no LiDAR, no hardware modifications allowed.
+  \item Tooling: simulator package released May 2026, Python interface specified late March, weekly updates.
+  \item Prize: \$500\,K pool; Anduril job offer for one finalist.
+\end{itemize}
+
+Compared with A2RL, AIGP \emph{does} provide a simulator and a flight-data export pipeline, so the qualifier path can be executed entirely from synthetic data. The catch: between Round 1 and Round 2, environmental complexity rises sharply --- the perception stack must survive the move from a desaturated arena to a 3D-scanned real environment, and again at the physical qualifier where the simulator parity is unknown.
+
+\clearpage
+% ─────────────────────────────────────────────────────────────────────────
+% 3. PUBLIC-DATASET SURVEY
+% ─────────────────────────────────────────────────────────────────────────
+\section{Public-dataset survey}
+
+The table below lists every public, drone-racing-adjacent dataset we evaluated. Verdicts in the right column reflect compatibility with our existing pipeline (segmentation $\rightarrow$ inner-corner keypoints $\rightarrow$ PnP), \emph{not} dataset quality in the abstract.
+
+{\small
+\begin{tabularx}{\linewidth}{@{} L{2.8cm} L{0.9cm} L{1.2cm} X L{3.6cm} @{}}
+\toprule
+\textbf{Dataset} & \textbf{Year} & \textbf{Real /\,Sim} & \textbf{Labels} & \textbf{Verdict} \\
+\midrule
+TII v3.0.0~\cite{tii2025dataset} & 2025 & Real & 17-col YOLO-keypoint, 4 inner corners + visibility, 36 flights, CC BY 4.0 & \textbf{Primary.} Already wired into our \code{discovery.py}. \\
+\addlinespace
+UZH-FPV~\cite{delmerico2019uzhfpv} & 2019 & Real & 6-DoF pose ground truth (Leica), no gate labels & Useful for VIO regression tests; no direct value for gate detection unless we re-annotate. \\
+\addlinespace
+Blackbird~\cite{antonini2018blackbird} & 2018 & Real & Camera + motor telemetry, $\sim$4.9\,TB; no gate labels & Out of scope: aggressive-flight perception, no gates. \\
+\addlinespace
+AirSim DRL~\cite{microsoft2019airsim} & 2019 & Sim & Programmatic gate poses; render any annotation & \textbf{Use as a synthesis harness}, not as a fixed dataset. Repository archived, but the simulator still runs. \\
+\addlinespace
+GateNet AU-DR~\cite{pham2021gatenet} & 2021 & Real $+$ Sim & Gate \emph{pose} (centre/distance/orientation) on fish-eye images & Single-pose label, not corners --- secondary. Useful for cross-validating our PnP outputs. \\
+\addlinespace
+PencilNet synth~\cite{pham2022pencilnet} & 2022 & Sim & 31\,k UE4 fish-eye renders, gate pose tuple & Single-pose label. Useful as a sim-to-real reference, not as direct training data. \\
+\addlinespace
+AlphaPilot 2019 & 2019 & Real & 28\,k images, bbox + corner keypoints & \textbf{Closest in spirit to our label format, but \emph{not publicly distributed}.} Reported only via challenge writeups; no archival URL we could verify. \\
+\bottomrule
+\end{tabularx}
+}
+
+\paragraph{Take-away.} Only one dataset in this list --- TII --- delivers labels that fit our exact pipeline without re-annotation, and it is the one we already train on. Every other public source either (a) lacks gate labels, (b) provides single-pose labels rather than per-corner keypoints, or (c) is closed. Closing the competition domain gap therefore cannot be done by adding more public data; it must be done by adding synthetic data (with our own labels) and by collecting and labelling real footage from our own flights and from each competition venue.
+
+% ─────────────────────────────────────────────────────────────────────────
+% 4. RECOMMENDED TRAINING STACK
+% ─────────────────────────────────────────────────────────────────────────
+\section{Recommended training stack}
+
+\textbf{Primary corpus.} TII v3.0.0~\cite{tii2025dataset}, already wired through \code{src/gate\_detection/data/discovery.py} (28 train / 8 val flights, deterministic split with \code{random.seed(42)}).
+
+\textbf{Synthetic supplement.} Render A2RL-spec 1.5\,m / 2.7\,m square gates in the AirSim NeurIPS-2019 environments~\cite{microsoft2019airsim} via the existing object-pose API, scripting random gate placement / pose / scale and reading back ground-truth corners through \code{simSetSegmentationObjectID}. The repository's offline augmentation pipeline (\code{data/synthesis.py}) already composites gates onto Places365 backgrounds; the AirSim renders extend the same logic to physically plausible camera poses.
+
+\textbf{Background pool.} The existing \code{scripts/download\_backgrounds.py} pull from \texttt{Andron00e/Places365-custom} on Hugging Face is sufficient for general indoor diversity. Before each competition we should additionally photograph 30--50 venue-style background frames (no gates) to push the offline augmenter toward the actual lighting and clutter we will see.
+
+\textbf{Loss \& head.} No change. Deep-supervised Dice + BCE on the segmentation backbone, QuAdGate corner extraction post-hoc; the documented architecture in \code{docs/architecture.md} stays.
+
+% ─────────────────────────────────────────────────────────────────────────
+% 5. TESTING TACTIC
+% ─────────────────────────────────────────────────────────────────────────
+\section{Testing tactic}
+
+\textbf{Failure mode to design against:} a checkpoint that reports 82\,\% on the TII test split but collapses on real footage. The current evaluation reports a single TII number and is therefore blind to that collapse until the drone is in the air. The fix is to run three independent evaluations on every candidate checkpoint, in this order:
+
+\subsection{Tier 1 \textemdash{} TII held-out, split by mode}
+
+Existing \code{scripts/evaluate.py} on the TII val/test set, but \emph{report autonomous and piloted IoU separately}. The two flight modes have different gate distances, motion blur regimes and label noise; pooling them masks regressions on the harder mode.
+
+\textit{Pass criterion:} no autonomous-only or piloted-only IoU drop $>2$ pp from the previous accepted checkpoint.
+
+\subsection{Tier 2 \textemdash{} Real-footage benchmark (to be built)}
+
+Hand-label $\sim$300 frames from team-recorded flights using \code{scripts/viewer.py}; the ``real'' eval set must include lighting conditions, gate distances and gate orientations \emph{not} represented in TII. Track detection rate, IoU and reprojection error separately.
+
+\textit{Pass criterion:} real-footage detection rate $\geq$60\,\% before any field deployment; reprojection error within 2$\times$ of the TII number. Anything weaker means we are still in the regime where the README documents 39\,\%, and we should not believe the simulator either.
+
+\subsection{Tier 3 \textemdash{} On-site smoke test}
+
+At each competition, the first practice slot is a \emph{regression check}: run inference on the venue feed for $\geq$3 minutes, store the raw frames + masks, and compare against a frozen pre-deployment checkpoint. Any new false-positive class (e.g.\ a wall structure being segmented as gate) is an instant abort to the previous checkpoint.
+
+\textit{Pass criterion:} no novel false-positive class beyond the offline real-footage benchmark.
+
+% ─────────────────────────────────────────────────────────────────────────
+% 6. FINE-TUNING STRATEGY
+% ─────────────────────────────────────────────────────────────────────────
+\section{Fine-tuning on competition data}
+
+\textbf{Should we fine-tune?} Yes --- but only with real samples from the actual competition gate, and only after we have a labelled real-footage benchmark to detect regression.
+
+\textit{Why ``yes''.} \cite{qiao2024continual} demonstrate that under nothing more than illumination change, gate-detection performance degrades enough to require explicit adaptation, and that a small rehearsal buffer recovers most of it. \cite{pham2022pencilnet} show that synthetic-only training can be made to transfer zero-shot \emph{only} via a domain-invariant filter (their ``pencil'' edge representation); without such a trick, sim-to-real falls off. The MonoRace team --- the only team to have actually solved the A2RL course at champion level --- relied on synthetic data plus an offline self-supervised geometric calibration step keyed off known gate dimensions~\cite{bahnam2026monorace}. Their pipeline is the strongest single existence proof that competition-time adaptation is needed.
+
+\subsection{What to collect}
+
+For each competition, before the first scored run:
+
+\begin{itemize}
+  \item 5--10 minutes of FPV footage of the actual competition gate, taken from $\geq$3 spatial angles (head-on, 30--45\degree, oblique) and $\geq$2 lighting conditions (with \emph{and} without venue stage lights).
+  \item Static photographs of the gate corners with a tape measure visible, to confirm published dimensions.
+  \item Background frames with no gates, for the offline augmenter (see \S4).
+\end{itemize}
+
+\subsection{How to label}
+
+\begin{enumerate}
+  \item Run the current best checkpoint on every collected frame to produce \emph{pseudo-labels}.
+  \item Open \code{scripts/viewer.py} (already present); accept / reject / edit corners by hand.
+  \item Stop when a Tier-2-shaped 200--300 frame split exists.
+\end{enumerate}
+
+\subsection{What to update, what to freeze}
+
+\begin{itemize}
+  \item Freeze the encoder (ResNet-34 or equivalent in our backbone) for the first stage of fine-tuning.
+  \item Train the decoder and the last two conv blocks at $0.1\times$ the original learning rate.
+  \item Co-train with a \emph{rehearsal mini-batch} from TII (1:1 ratio at minimum) to prevent catastrophic forgetting~\cite{qiao2024continual}.
+  \item Stop early --- ``best on competition split, no regression on TII val'' is the joint criterion. If the joint criterion cannot be satisfied within 10 epochs, the dataset is too small or too biased; collect more, do not train longer.
+\end{itemize}
+
+\subsection{Validation gate before deployment}
+
+A fine-tuned checkpoint may only replace the deployed one if all three Tier criteria pass:
+
+\begin{enumerate}
+  \item TII val: no $>$2\,pp regression on either flight mode.
+  \item Real-footage benchmark: detection rate $\geq$60\,\%, reprojection within 2$\times$ TII.
+  \item On-site smoke test: no novel false-positive class.
+\end{enumerate}
+
+% ─────────────────────────────────────────────────────────────────────────
+% 7. RISKS & OPEN QUESTIONS
+% ─────────────────────────────────────────────────────────────────────────
+\section{Risks \& open questions}
+
+\begin{itemize}
+  \item \textbf{A2RL gate appearance unconfirmed.} We have geometry from~\cite{bahnam2026monorace}, but colour, surface finish, and reflectivity are not pinned. Plan for a worst-case white powder-coated frame against grey concrete --- the failure mode where every wall edge looks gate-like. Confirm against ASPIRE technical bulletins as soon as 2026 specs are published.
+  \item \textbf{AIGP camera intrinsics.} The Neros camera differs from the TII rig; we should ingest a Round-1 simulator frame as soon as the May 2026 release lands and re-run undistortion against our intrinsics file.
+  \item \textbf{PnP rotation error of 45.6\degree\ in the README} (\code{README.md:38--42}) is too large to be a detector failure alone; it suggests a frame-axis sign or extrinsics bug in the PnP stage that is independent of, and must be fixed before, dataset work shows up in pose accuracy. Treat as a separate workstream.
+  \item \textbf{No public AlphaPilot dataset} despite multiple writeups citing one. Our plan must not depend on access; the synthesis pipeline plus on-site collection has to be sufficient on its own.
+  \item \textbf{Compute budget for synthetic rendering.} The AirSim repository is archived and unmaintained; if it breaks under macOS / current Unreal builds, falling back to a NeRF-based render of an A2RL-spec gate is a reasonable plan B but requires effort not yet scoped.
+\end{itemize}
+
+% ─────────────────────────────────────────────────────────────────────────
+% BIBLIOGRAPHY
+% ─────────────────────────────────────────────────────────────────────────
+\printbibliography[heading=bibnumbered,title={References}]
+
+\end{document}
