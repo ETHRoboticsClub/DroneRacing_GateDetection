@@ -228,3 +228,12 @@ __marimo__/
 
 # Local Claude Code instructions
 CLAUDE.md
+
+# AWS / cloud credentials — never commit
+.aws/
+*_accessKeys.csv
+credentials.csv
+aws-credentials*
+*.pem
+.env
+.env.*
