@@ -276,14 +276,15 @@ the on-site smoke test catches venue-specific surprises. A checkpoint advances o
         ($(d1.north west)+(0,0.05)$) -- ($(head.north east)+(0,0.05)$)
         node[midway, above, color=coral, font=\scriptsize, yshift=0.05em]{decoder $+$ head (tunable)};
   % --- Data sources BELOW the network: rehearsal mini-batch -------------
+  % Spread far enough apart that the 1.7cm-wide databoxes do not collide.
   \node[databox, draw=teal,  fill=tealtint,
-        below=0.95cm of e1.south, xshift=0.4cm, text width=2.0cm] (compdata)
-        {Competition frames \emph{(new, 200--300)}};
+        below=0.95cm of e1.south, xshift=-0.45cm, text width=1.7cm] (compdata)
+        {Competition frames \emph{(new)}};
   \node[databox, draw=coral, fill=coraltint,
-        below=0.95cm of e3.south, xshift=0.0cm, text width=2.0cm] (tiidata)
+        below=0.95cm of e4.south, xshift=0.45cm,  text width=1.7cm] (tiidata)
         {TII rehearsal \emph{(1\,:\,1 mix)}};
-  \draw[-{Stealth[length=4pt]}, color=teal,  line width=0.7pt] (compdata.north) -- ($(e1.south)+(0.25,0)$);
-  \draw[-{Stealth[length=4pt]}, color=coral, line width=0.7pt] (tiidata.north)  -- ($(e3.south)+(-0.10,0)$);
+  \draw[-{Stealth[length=4pt]}, color=teal,  line width=0.7pt] (compdata.north) -- ($(e1.south)+(-0.15,0)$);
+  \draw[-{Stealth[length=4pt]}, color=coral, line width=0.7pt] (tiidata.north)  -- ($(e4.south)+(0.15,0)$);
 \end{tikzpicture}
 \end{adjustbox}
 \caption{Fine-tuning protocol. Encoder weights are frozen; only the decoder and the mask head update, at
@@ -316,7 +317,7 @@ na\"ive sequential fine-tuning under shifting illumination.}
     \draw[teal, line width=0.7pt] (i1) -- (i2) -- (i3) -- (i4) -- cycle;
     \foreach \p in {i1, i2, i3, i4}
       \fill[coral] (\p) circle (0.085);
-    \node[anchor=north, font=\scriptsize\titlefont, color=ink, yshift=-0.1cm] at (frameA.south) {(a) inner corners (label)};
+    \node[anchor=north, font=\scriptsize\titlefont, color=ink, yshift=-0.1cm] at (frameA.south) {(a) inner corners};
   \end{scope}
   % Panel B: outer corners synthesised at scale=1.4 from centroid
   \begin{scope}[xshift=5cm]
@@ -339,7 +340,7 @@ na\"ive sequential fine-tuning under shifting illumination.}
       \draw[forest, line width=0.7pt] (\p) circle (0.085);
     \fill[ink] (cen) circle (0.04);
     \node[anchor=west, font=\scriptsize\color{forest}, xshift=0.05cm, yshift=0.03cm] at (cen) {centroid};
-    \node[anchor=north, font=\scriptsize\titlefont, color=ink, yshift=-0.1cm] at (frameB.south) {(b) outer = centroid $+\,1.4\cdot$(inner$-$centroid)};
+    \node[anchor=north, font=\scriptsize\titlefont, color=ink, yshift=-0.1cm] at (frameB.south) {(b) outer corners synthesised};
   \end{scope}
   % Panel C: ring mask (filled outer, hole at inner)
   \begin{scope}[xshift=10cm]
@@ -355,15 +356,16 @@ na\"ive sequential fine-tuning under shifting illumination.}
     \coordinate (o4) at ($ (cen)!1.4!(i4) $);
     % Filled ring via even-odd rule: outer poly + inner poly together
     \fill[coral!85, even odd rule] (o1) -- (o2) -- (o3) -- (o4) -- cycle  (i1) -- (i2) -- (i3) -- (i4) -- cycle;
-    \node[anchor=north, font=\scriptsize\titlefont, color=ink, yshift=-0.1cm] at (frameC.south) {(c) ring mask = outer\,$\setminus$\,inner};
+    \node[anchor=north, font=\scriptsize\titlefont, color=ink, yshift=-0.1cm] at (frameC.south) {(c) ring mask};
   \end{scope}
 \end{tikzpicture}
 \end{adjustbox}
-\caption{Ring-mask construction. The dataset only labels the four \emph{inner} corners of each gate
-(coral dots). Outer corners (forest rings) are synthesised offline by radial scaling about the inner centroid with factor
-$1.4$ (\code{benchmark_pnp.py:79--81}). The training target is the binary ring between the two quadrilaterals
-(\code{src/gate_detection/data/labels.py:103--146}); the gap between the rectangles is exactly the line-detector signal
-QuAdGate keys on for sub-pixel corner extraction.}
+\caption{Ring-mask construction. \textbf{(a)} The dataset only labels the four \emph{inner} corners of each gate (coral dots).
+\textbf{(b)} The outer corners (forest rings) are synthesised offline by radial scaling about the inner centroid with factor
+$1.4$, i.e.\ $\mathrm{outer} = \mathrm{centroid} + 1.4\cdot(\mathrm{inner} - \mathrm{centroid})$
+(\code{benchmark_pnp.py:79--81}). \textbf{(c)} The training target is the binary ring between the two quadrilaterals
+(\code{src/gate_detection/data/labels.py:103--146}); the gap is exactly the line-detector signal QuAdGate keys on for
+sub-pixel corner extraction.}
 \label{fig:ringmask}
 \end{figure}%
 }
