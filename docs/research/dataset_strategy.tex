@@ -83,10 +83,13 @@
 
 % ─── graphics & links ─────────────────────────────────────────────────────
 \usepackage{graphicx}
+\usepackage{adjustbox}                  % auto-fit figures to \linewidth
 \usepackage{tikz}
 \usetikzlibrary{calc, arrows.meta, positioning, shapes.geometric, shapes.misc, fit, backgrounds, decorations.pathreplacing}
 \usepackage{pgfplots}
 \pgfplotsset{compat=1.18}
+\usepackage[font=footnotesize, labelfont={bf,color=ink}, labelsep=period, format=plain]{caption}
+\captionsetup{justification=raggedright, singlelinecheck=false}
 \usepackage[hidelinks]{hyperref}
 \hypersetup{
   colorlinks=true,
@@ -157,66 +160,12 @@
 \providecommand{\degree}{\textdegree}
 % \code{...} renders inline paths/identifiers in Sometype Mono and allows
 % line-breaks at any character — this is what kills overfull hboxes when a
-% long path lands at the end of a line.
-\DeclareUrlCommand{\code}{\urlstyle{tt}\monofont\small\color{ink}}
+% long path lands at the end of a line. Wrap with \protect inside captions.
+\DeclareUrlCommand{\codeurl}{\urlstyle{tt}\monofont\small\color{ink}}
+\DeclareRobustCommand{\code}[1]{\codeurl{#1}}
 
 % ─── figures ──────────────────────────────────────────────────────────────
-% Fig 1: Domain gap — twin bar charts side-by-side comparing detection rate
-% and reprojection error on the TII test split vs real recorded footage.
-\newcommand{\FigDomainGap}{%
-\begin{figure}[!ht]
-\centering
-\begin{tikzpicture}
-  \begin{axis}[
-    name=plotL, width=6.0cm, height=4.5cm,
-    ybar, bar width=0.65cm, enlarge x limits=0.45,
-    ymin=0, ymax=100,
-    ylabel={\footnotesize Detection rate (\%)},
-    ylabel style={yshift=-0.3em},
-    symbolic x coords={TII test, Real footage},
-    xtick=data,
-    nodes near coords,
-    nodes near coords style={font=\footnotesize\titlefont, color=ink},
-    every node near coord/.append style={anchor=south},
-    tick label style={font=\footnotesize},
-    axis line style={color=muted!60},
-    tick style={color=muted!60},
-    grid=major, major grid style={dashed, color=rule},
-    title={\titlefont\footnotesize\color{ink} Detection rate},
-  ]
-    \addplot[fill=teal!75,   draw=teal,  fill opacity=0.85] coordinates {(TII test,82)};
-    \addplot[fill=coral!75,  draw=coral, fill opacity=0.85] coordinates {(Real footage,39)};
-  \end{axis}
-  \begin{axis}[
-    at={(plotL.south east)}, anchor=south west, xshift=0.6cm,
-    width=6.0cm, height=4.5cm,
-    ybar, bar width=0.65cm, enlarge x limits=0.45,
-    ymin=0, ymax=40,
-    ylabel={\footnotesize Reprojection error (px)},
-    ylabel style={yshift=-0.3em},
-    symbolic x coords={TII test, Real footage},
-    xtick=data,
-    nodes near coords,
-    nodes near coords style={font=\footnotesize\titlefont, color=ink},
-    every node near coord/.append style={anchor=south},
-    tick label style={font=\footnotesize},
-    axis line style={color=muted!60},
-    tick style={color=muted!60},
-    grid=major, major grid style={dashed, color=rule},
-    title={\titlefont\footnotesize\color{ink} Mean reprojection error},
-  ]
-    \addplot[fill=teal!75,   draw=teal,  fill opacity=0.85] coordinates {(TII test,5.0)};
-    \addplot[fill=coral!75,  draw=coral, fill opacity=0.85] coordinates {(Real footage,30.7)};
-  \end{axis}
-\end{tikzpicture}
-\caption*{\footnotesize\textbf{Figure 1.} The domain gap that motivates this brief. Same checkpoint, two evaluation sets:
-the TII test split (teal) and our team's real recorded footage (coral). Detection rate halves and reprojection error grows
-$6\times$. Source numbers: \code{README.md} \S Known Issues, lines 31--48.}
-\label{fig:domain-gap}
-\end{figure}%
-}
-
-% Fig 2: Detection pipeline — RGB image -> segmentation -> mask ->
+% Detection pipeline — RGB image -> segmentation -> mask ->
 % QuAdGate corner extraction -> PnP -> 6-DoF pose. Mirrors MonoRace Fig 5
 % \cite{bahnam2026monorace} and what our repo actually runs.
 \tikzset{
@@ -232,6 +181,7 @@ $6\times$. Source numbers: \code{README.md} \S Known Issues, lines 31--48.}
 \newcommand{\FigPipeline}{%
 \begin{figure}[!ht]
 \centering
+\begin{adjustbox}{max width=\linewidth}
 \begin{tikzpicture}[node distance=0.55cm]
   \node[pipein]    (img)  {RGB frame\\ \scriptsize $384{\times}384$};
   \node[pipelearn, right=of img]  (seg)  {Segmentation\\ \scriptsize DeepLabV3$+$ / GateNet};
@@ -249,9 +199,11 @@ $6\times$. Source numbers: \code{README.md} \S Known Issues, lines 31--48.}
      \textcolor{teal}{\rule[0.18ex]{0.5em}{0.5em}}\, classical \hspace{0.6em}
      \textcolor{forest}{\rule[0.18ex]{0.5em}{0.5em}}\, output};
 \end{tikzpicture}
-\caption*{\footnotesize\textbf{Figure 2.} The two-stage gate-detection pipeline used in this repo. The learned segmentation
+\end{adjustbox}
+\caption{The two-stage gate-detection pipeline used in this repo. The learned segmentation
 backbone runs once per frame; QuAdGate then extracts sub-pixel inner and outer corners by intersecting LSD line segments and
-matching descriptors. The structure mirrors the A2RL-winning MonoRace pipeline (Fig.~5 of~\cite{bahnam2026monorace}).}
+matching them against fixed prior bit patterns (\code{src/gate_detection/postprocessing/quadgate.py:32--35}). The structure
+mirrors the A2RL-winning MonoRace pipeline (Fig.~5 of~\cite{bahnam2026monorace}).}
 \label{fig:pipeline}
 \end{figure}%
 }
@@ -261,25 +213,27 @@ matching descriptors. The structure mirrors the A2RL-winning MonoRace pipeline (
 \newcommand{\FigEvalTiers}{%
 \begin{figure}[!ht]
 \centering
+\begin{adjustbox}{max width=\linewidth}
 \begin{tikzpicture}[font=\footnotesize]
   \def\rh{0.95}      % row height
-  \def\gap{0.05}     % gap between rows
-  % Tier 1 — narrowest band on top (cheap, fast feedback)
-  \fill[teal!85]   (-3.2,2*\rh+\gap)   rectangle ( 3.2,3*\rh+\gap);
-  \node[white, font=\footnotesize\bfseries] at (0,2.5*\rh+\gap) {Tier 1 \,\textbar\, TII held-out (split by autonomous / piloted)};
-  % Tier 2 — middle (slower, venue-relevant)
-  \fill[coral!85]  (-4.4,1*\rh)        rectangle ( 4.4,2*\rh);
-  \node[white, font=\footnotesize\bfseries] at (0,1.5*\rh) {Tier 2 \,\textbar\, hand-labelled real-footage benchmark};
-  % Tier 3 — widest at bottom (slowest, definitive)
-  \fill[forest!85] (-5.5,0)            rectangle ( 5.5,1*\rh-\gap);
-  \node[white, font=\footnotesize\bfseries] at (0,0.5*\rh-\gap/2) {Tier 3 \,\textbar\, on-site smoke test vs.\ frozen checkpoint};
-  % side annotations: speed (left), cost (right)
-  \draw[-{Stealth[length=4pt]}, color=muted!85, line width=0.6pt]
-       (-6.3,0) -- (-6.3,3*\rh+\gap) node[midway, sloped, above, color=muted, font=\scriptsize] {fewer false-negatives};
-  \draw[-{Stealth[length=4pt]}, color=muted!85, line width=0.6pt]
-       (6.3,3*\rh+\gap) -- (6.3,0) node[midway, sloped, above, color=muted, font=\scriptsize] {higher cost / latency};
+  \def\gap{0.06}     % vertical gap between rows
+  % Pyramid effect: each band wider than the one above. Half-widths chosen
+  % to fit the longest in-band label on a single line at \footnotesize.
+  % Tier 1 — TII held-out
+  \fill[teal!85]   (-5.3, 2*\rh+\gap)   rectangle ( 5.3, 3*\rh+\gap);
+  \node[white, font=\footnotesize\bfseries] at (0, 2.5*\rh+\gap)
+       {Tier 1 \,\textbar\, TII held-out (autonomous / piloted, separately reported)};
+  % Tier 2 — real-footage benchmark
+  \fill[coral!85]  (-6.4, 1*\rh)        rectangle ( 6.4, 2*\rh);
+  \node[white, font=\footnotesize\bfseries] at (0, 1.5*\rh)
+       {Tier 2 \,\textbar\, hand-labelled real-footage benchmark ($\geq$300 frames)};
+  % Tier 3 — on-site smoke test
+  \fill[forest!85] (-7.4, 0)            rectangle ( 7.4, 1*\rh-\gap);
+  \node[white, font=\footnotesize\bfseries] at (0, 0.5*\rh-\gap/2)
+       {Tier 3 \,\textbar\, on-site smoke test vs.\ frozen pre-deployment checkpoint};
 \end{tikzpicture}
-\caption*{\footnotesize\textbf{Figure 3.} Three-tier evaluation. Each tier catches failure modes the cheaper one cannot:
+\end{adjustbox}
+\caption{Three-tier evaluation. Each tier catches failure modes the cheaper one cannot:
 TII held-out catches segmentation regressions; the real-footage benchmark catches the domain shift the brief is built around;
 the on-site smoke test catches venue-specific surprises. A checkpoint advances only after all three pass.}
 \label{fig:eval-tiers}
@@ -292,48 +246,50 @@ the on-site smoke test catches venue-specific surprises. A checkpoint advances o
 \newcommand{\FigFineTune}{%
 \begin{figure}[!ht]
 \centering
+\begin{adjustbox}{max width=\linewidth}
 \begin{tikzpicture}[
   font=\footnotesize,
   layer/.style={draw, rounded corners=1pt, minimum width=1.0cm, minimum height=0.9cm, align=center, inner sep=2pt},
   frozen/.style={layer, draw=muted!80, fill=rule!40, text=muted},
   tunable/.style={layer, draw=coral, fill=coraltint, text=ink, line width=0.7pt},
-  databox/.style={draw, rounded corners=2pt, align=center, font=\footnotesize, inner sep=4pt, minimum height=0.9cm},
+  databox/.style={draw, rounded corners=2pt, align=center, font=\scriptsize, inner sep=3pt, minimum height=0.85cm},
 ]
-  % network: encoder (4 frozen layers) + decoder (4 tunable layers) + head
-  \node[frozen]                (e1)                {ResBlk\\ \scriptsize frozen};
-  \node[frozen, right=0.15cm of e1]  (e2)          {ResBlk\\ \scriptsize frozen};
-  \node[frozen, right=0.15cm of e2]  (e3)          {ResBlk\\ \scriptsize frozen};
-  \node[frozen, right=0.15cm of e3]  (e4)          {ResBlk\\ \scriptsize frozen};
-  \node[tunable, right=0.55cm of e4] (d1)          {Conv$\uparrow$\\ \scriptsize update};
-  \node[tunable, right=0.15cm of d1] (d2)          {Conv$\uparrow$\\ \scriptsize update};
-  \node[tunable, right=0.15cm of d2] (d3)          {Conv$\uparrow$\\ \scriptsize update};
-  \node[tunable, right=0.15cm of d3] (head)        {Mask\\ head};
-  % connecting arrows along network
-  \draw[-{Stealth[length=3pt]}, color=muted] (e1) -- (e2);
-  \draw[-{Stealth[length=3pt]}, color=muted] (e2) -- (e3);
-  \draw[-{Stealth[length=3pt]}, color=muted] (e3) -- (e4);
-  \draw[-{Stealth[length=3pt]}, color=muted] (e4) -- (d1);
-  \draw[-{Stealth[length=3pt]}, color=muted] (d1) -- (d2);
-  \draw[-{Stealth[length=3pt]}, color=muted] (d2) -- (d3);
-  \draw[-{Stealth[length=3pt]}, color=muted] (d3) -- (head);
-  % rehearsal mini-batch: two coloured sources flowing into encoder
-  \node[databox, draw=teal,  fill=tealtint,  below=1.0cm of e1, xshift=-0.2cm] (compdata) {Competition\\ frames\\ \scriptsize (new)};
-  \node[databox, draw=coral, fill=coraltint, below=1.0cm of e2, xshift=0.2cm] (tiidata)  {TII rehearsal\\ \scriptsize (1:1 mix)};
-  \draw[-{Stealth[length=4pt]}, color=teal,  line width=0.7pt] (compdata.north) -- ($(e1.south)+(0.2,0)$);
-  \draw[-{Stealth[length=4pt]}, color=coral, line width=0.7pt] (tiidata.north)  -- ($(e2.south)+(-0.2,0)$);
-  % loss block on the right
-  \node[databox, draw=forest, fill=foresttint, right=0.5cm of head] (loss) {Dice $+$ BCE\\ \scriptsize joint loss};
+  % --- Network row -------------------------------------------------------
+  \node[frozen]                       (e1)   {ResBlk\\ \scriptsize frozen};
+  \node[frozen, right=0.12cm of e1]   (e2)   {ResBlk\\ \scriptsize frozen};
+  \node[frozen, right=0.12cm of e2]   (e3)   {ResBlk\\ \scriptsize frozen};
+  \node[frozen, right=0.12cm of e3]   (e4)   {ResBlk\\ \scriptsize frozen};
+  \node[tunable, right=0.55cm of e4]  (d1)   {Conv$\uparrow$\\ \scriptsize update};
+  \node[tunable, right=0.12cm of d1]  (d2)   {Conv$\uparrow$\\ \scriptsize update};
+  \node[tunable, right=0.12cm of d2]  (d3)   {Conv$\uparrow$\\ \scriptsize update};
+  \node[tunable, right=0.12cm of d3]  (head) {Mask\\ head};
+  \node[databox, draw=forest, fill=foresttint, right=0.5cm of head] (loss) {Dice $+$ BCE\\ joint loss};
+  \foreach \a/\b in {e1/e2, e2/e3, e3/e4, e4/d1, d1/d2, d2/d3, d3/head} {
+    \draw[-{Stealth[length=3pt]}, color=muted] (\a) -- (\b);
+  }
   \draw[-{Stealth[length=4pt]}, color=forest, line width=0.7pt] (head.east) -- (loss.west);
-  % brace labels
-  \draw[decorate, decoration={brace, mirror, amplitude=4pt}, color=muted!80]
-        (e1.south west)+(0,-0.05) -- node[below, midway, color=muted, font=\scriptsize, yshift=-0.2em]{encoder (frozen)} ($(e4.south east)+(0,-0.05)$);
-  \draw[decorate, decoration={brace, mirror, amplitude=4pt}, color=coral!80]
-        (d1.south west)+(0,-0.05) -- node[below, midway, color=coral, font=\scriptsize, yshift=-0.2em]{decoder $+$ head (tunable)} ($(head.south east)+(0,-0.05)$);
+  % --- Brace labels ABOVE the network row (out of the way of data flow) --
+  \draw[decorate, decoration={brace, amplitude=4pt}, color=muted!80]
+        ($(e1.north west)+(0,0.05)$) -- ($(e4.north east)+(0,0.05)$)
+        node[midway, above, color=muted, font=\scriptsize, yshift=0.05em]{encoder (frozen)};
+  \draw[decorate, decoration={brace, amplitude=4pt}, color=coral!80]
+        ($(d1.north west)+(0,0.05)$) -- ($(head.north east)+(0,0.05)$)
+        node[midway, above, color=coral, font=\scriptsize, yshift=0.05em]{decoder $+$ head (tunable)};
+  % --- Data sources BELOW the network: rehearsal mini-batch -------------
+  \node[databox, draw=teal,  fill=tealtint,
+        below=0.95cm of e1.south, xshift=0.4cm, text width=2.0cm] (compdata)
+        {Competition frames \emph{(new, 200--300)}};
+  \node[databox, draw=coral, fill=coraltint,
+        below=0.95cm of e3.south, xshift=0.0cm, text width=2.0cm] (tiidata)
+        {TII rehearsal \emph{(1\,:\,1 mix)}};
+  \draw[-{Stealth[length=4pt]}, color=teal,  line width=0.7pt] (compdata.north) -- ($(e1.south)+(0.25,0)$);
+  \draw[-{Stealth[length=4pt]}, color=coral, line width=0.7pt] (tiidata.north)  -- ($(e3.south)+(-0.10,0)$);
 \end{tikzpicture}
-\caption*{\footnotesize\textbf{Figure 4.} Fine-tuning protocol. Encoder weights are frozen; only the decoder and the mask head
-update, at $0.1\times$ the original learning rate. Each batch mixes new competition frames with TII rehearsal samples 1:1, an
-explicit guard against catastrophic forgetting --- the failure mode~\cite{qiao2024continual} reports for naïve sequential
-fine-tuning under shifting illumination.}
+\end{adjustbox}
+\caption{Fine-tuning protocol. Encoder weights are frozen; only the decoder and the mask head update, at
+$0.1\times$ the original learning rate. Each batch mixes newly-collected competition frames with a TII rehearsal sample
+($1\,:\,1$) --- an explicit guard against the catastrophic-forgetting failure mode~\cite{qiao2024continual} reports for
+na\"ive sequential fine-tuning under shifting illumination.}
 \label{fig:finetune}
 \end{figure}%
 }
@@ -346,6 +302,7 @@ fine-tuning under shifting illumination.}
 \newcommand{\FigRingMask}{%
 \begin{figure}[!ht]
 \centering
+\begin{adjustbox}{max width=\linewidth}
 \begin{tikzpicture}[font=\footnotesize]
   % Panel A: gate frame with inner corners
   \begin{scope}
@@ -401,11 +358,12 @@ fine-tuning under shifting illumination.}
     \node[anchor=north, font=\scriptsize\titlefont, color=ink, yshift=-0.1cm] at (frameC.south) {(c) ring mask = outer\,$\setminus$\,inner};
   \end{scope}
 \end{tikzpicture}
-\caption*{\footnotesize\textbf{Figure 5.} Ring-mask construction. The dataset only labels the four \emph{inner} corners of each gate
+\end{adjustbox}
+\caption{Ring-mask construction. The dataset only labels the four \emph{inner} corners of each gate
 (coral dots). Outer corners (forest rings) are synthesised offline by radial scaling about the inner centroid with factor
 $1.4$ (\code{benchmark_pnp.py:79--81}). The training target is the binary ring between the two quadrilaterals
-(\code{src/gate_detection/data/labels.py:103--146}); the gap between the rectangles is exactly the descriptor signal
-QuAdGate's LSD line-segment matcher needs.}
+(\code{src/gate_detection/data/labels.py:103--146}); the gap between the rectangles is exactly the line-detector signal
+QuAdGate keys on for sub-pixel corner extraction.}
 \label{fig:ringmask}
 \end{figure}%
 }
@@ -416,52 +374,54 @@ QuAdGate's LSD line-segment matcher needs.}
 \newcommand{\FigArchCompare}{%
 \begin{figure}[!ht]
 \centering
+\begin{adjustbox}{max width=\linewidth}
 \begin{tikzpicture}[
   font=\scriptsize,
-  encblk/.style={draw=teal,  fill=tealtint,  rounded corners=1pt, minimum width=0.95cm, minimum height=0.55cm, inner sep=2pt, align=center},
-  decblk/.style={draw=coral, fill=coraltint, rounded corners=1pt, minimum width=0.95cm, minimum height=0.55cm, inner sep=2pt, align=center},
-  asppblk/.style={draw=forest, fill=foresttint, rounded corners=1pt, minimum width=1.05cm, minimum height=0.55cm, inner sep=2pt, align=center},
-  headblk/.style={draw=muted!90, fill=rule!30, rounded corners=1pt, minimum width=0.65cm, minimum height=0.45cm, inner sep=2pt, align=center, font=\tiny},
+  encblk/.style={draw=teal,  fill=tealtint,  rounded corners=1pt, minimum width=0.95cm, minimum height=0.6cm, inner sep=2pt, align=center},
+  decblk/.style={draw=coral, fill=coraltint, rounded corners=1pt, minimum width=0.95cm, minimum height=0.6cm, inner sep=2pt, align=center},
+  asppblk/.style={draw=forest, fill=foresttint, rounded corners=1pt, minimum width=1.05cm, minimum height=0.6cm, inner sep=2pt, align=center},
+  headblk/.style={draw=muted!90, fill=rule!30, rounded corners=1pt, minimum width=0.65cm, minimum height=0.5cm, inner sep=2pt, align=center, font=\tiny},
   arr/.style={-{Stealth[length=3pt]}, color=muted, line width=0.55pt},
 ]
   % --- ROW 1 : GateNet ---------------------------------------------------
-  \node[font=\footnotesize\titlefont\bfseries, anchor=west] at (-0.5, 1.5) {GateNet (custom U-Net)};
-  \node[encblk] (e0) at (0,    0.6) {inc\\\tiny 16ch};
-  \node[encblk] (e1) at (1.10, 0.6) {d1\\\tiny 32};
-  \node[encblk] (e2) at (2.20, 0.6) {d2\\\tiny 64};
-  \node[encblk] (e3) at (3.30, 0.6) {d3\\\tiny 128};
-  \node[encblk] (e4) at (4.40, 0.6) {d4\\\tiny 128};
-  \node[decblk] (u1) at (5.55, 0.6) {u1\\\tiny 64};
-  \node[decblk] (u2) at (6.65, 0.6) {u2\\\tiny 32};
-  \node[decblk] (u3) at (7.75, 0.6) {u3\\\tiny 16};
-  \node[decblk] (u4) at (8.85, 0.6) {u4\\\tiny 16};
+  \node[font=\footnotesize\titlefont\bfseries, anchor=west] at (-0.2, 1.6) {GateNet (custom U-Net)};
+  \node[encblk] (e0) at (0.5, 0.7) {inc\\\tiny 16};
+  \node[encblk] (e1) at (1.55, 0.7) {d1\\\tiny 32};
+  \node[encblk] (e2) at (2.60, 0.7) {d2\\\tiny 64};
+  \node[encblk] (e3) at (3.65, 0.7) {d3\\\tiny 128};
+  \node[encblk] (e4) at (4.70, 0.7) {d4\\\tiny 128};
+  \node[decblk] (u1) at (5.75, 0.7) {u1\\\tiny 64};
+  \node[decblk] (u2) at (6.80, 0.7) {u2\\\tiny 32};
+  \node[decblk] (u3) at (7.85, 0.7) {u3\\\tiny 16};
+  \node[decblk] (u4) at (8.90, 0.7) {u4\\\tiny 16};
   % deep-supervision heads
   \foreach \n/\src/\w in {y0/e4/4, y1/u1/2, y2/u2/1, y3/u3/1, y4/u4/1} {
-    \node[headblk, below=0.45cm of \src] (\n) {\n\\\tiny w=\w};
+    \node[headblk, below=0.4cm of \src] (\n) {\n\\\tiny w=\w};
     \draw[arr] (\src) -- (\n);
   }
   \draw[arr] (e0) -- (e1); \draw[arr] (e1) -- (e2); \draw[arr] (e2) -- (e3); \draw[arr] (e3) -- (e4);
   \draw[arr] (e4) -- (u1); \draw[arr] (u1) -- (u2); \draw[arr] (u2) -- (u3); \draw[arr] (u3) -- (u4);
-  \node[anchor=west, font=\tiny\color{muted}, text width=15.5cm] at (-0.5, -0.85) {channel divisor $f=4$ \,$\Rightarrow$\, [16,32,64,128,128] \,/\, deep-supervision weights $(4,2,1,1,1)$ \,/\, only $y_4$ is used at deployment};
   % --- ROW 2 : DeepLabV3+ -----------------------------------------------
-  \node[font=\footnotesize\titlefont\bfseries, anchor=west] at (-0.5, -2.0) {DeepLabV3+ (smp wrapper)};
-  \node[encblk, minimum width=2.7cm] (rn) at (1.0, -2.9) {ResNet-34 encoder\\\tiny ImageNet (optional)};
-  \node[asppblk] (aspp) at (3.6, -2.9) {ASPP\\\tiny 1,6,12,18};
-  \node[decblk, minimum width=1.4cm] (dec) at (5.5, -2.9) {decoder};
-  \node[headblk, minimum width=0.85cm, minimum height=0.55cm] (head) at (7.0, -2.9) {head\\\tiny w=1};
+  \node[font=\footnotesize\titlefont\bfseries, anchor=west] at (-0.2, -1.5) {DeepLabV3+ (smp wrapper)};
+  \node[encblk, minimum width=2.6cm] (rn) at (1.5, -2.4) {ResNet-34 encoder\\\tiny ImageNet weights optional};
+  \node[asppblk] (aspp) at (4.0, -2.4) {ASPP\\\tiny rates 1,6,12,18};
+  \node[decblk, minimum width=1.4cm] (dec) at (5.95, -2.4) {decoder};
+  \node[headblk, minimum width=0.85cm, minimum height=0.6cm] (head) at (7.55, -2.4) {head\\\tiny w=1};
   \draw[arr] (rn) -- (aspp); \draw[arr] (aspp) -- (dec); \draw[arr] (dec) -- (head);
-  \node[anchor=west, font=\tiny\color{muted}, text width=15.5cm] at (-0.5, -3.7) {single-scale Dice\,+\,2.0$\times$BCE \,/\, ResNet-34 ImageNet weights available but disabled by default (\code{encoder_weights=None} in \code{models/deeplabv3plus.py:14})};
   % legend
-  \node[anchor=west, font=\tiny] at (-0.5, -4.4)
-    {\textcolor{teal}{\rule[0.18ex]{0.45em}{0.45em}}\, encoder \hspace{0.5em}
-     \textcolor{coral}{\rule[0.18ex]{0.45em}{0.45em}}\, decoder \hspace{0.5em}
-     \textcolor{forest}{\rule[0.18ex]{0.45em}{0.45em}}\, atrous spatial pooling \hspace{0.5em}
+  \node[anchor=west, font=\tiny] at (-0.2, -3.5)
+    {\textcolor{teal}{\rule[0.18ex]{0.45em}{0.45em}}\, encoder \hspace{0.6em}
+     \textcolor{coral}{\rule[0.18ex]{0.45em}{0.45em}}\, decoder \hspace{0.6em}
+     \textcolor{forest}{\rule[0.18ex]{0.45em}{0.45em}}\, atrous spatial pyramid pooling \hspace{0.6em}
      \textcolor{muted}{\rule[0.18ex]{0.45em}{0.45em}}\, output head};
 \end{tikzpicture}
-\caption*{\footnotesize\textbf{Figure 6.} The two backbones the repository can train (\code{src/gate_detection/models/}). GateNet is
-a narrow U-Net with five sigmoid heads: $y_0$ at the bottleneck, $y_4$ at full resolution, and three intermediate decoder taps;
-the deep-supervision sum weights early-decoder heads more heavily ($4,2,1,1,1$). DeepLabV3+ is single-headed, with the option of
-loading ImageNet-pretrained ResNet-34 weights (currently disabled by default). Both feed the same QuAdGate corner extractor.}
+\end{adjustbox}
+\caption{The two interchangeable backbones in \code{src/gate_detection/models/}. \textbf{GateNet} is a narrow U-Net
+with channel divisor $f{=}4$ (stage widths $[16,\,32,\,64,\,128,\,128]$) and five deep-supervision heads ($y_0$ at the
+bottleneck, $y_4$ at full resolution, three intermediate); the per-scale loss is summed with weights $(4,\,2,\,1,\,1,\,1)$
+and only $y_4$ is used at deployment. \textbf{DeepLabV3+} is single-headed (single-scale Dice $+ 2{\times}$BCE) and supports
+ImageNet-pretrained ResNet-34, but \code{encoder_weights=None} is the default in \code{models/deeplabv3plus.py:14}, so
+ResNet-34 currently trains from scratch. Both backbones feed the same QuAdGate corner extractor.}
 \label{fig:archcompare}
 \end{figure}%
 }
@@ -472,6 +432,7 @@ loading ImageNet-pretrained ResNet-34 weights (currently disabled by default). B
 \newcommand{\FigSotaMap}{%
 \begin{figure}[!ht]
 \centering
+\begin{adjustbox}{max width=\linewidth}
 \begin{tikzpicture}[font=\footnotesize]
   % horizontal axis: target representation
   \def\colW{4.3}                            % column width (cm)
@@ -499,17 +460,15 @@ loading ImageNet-pretrained ResNet-34 weights (currently disabled by default). B
   \node[anchor=north west, align=left, text width=\colT cm, font=\footnotesize, inner sep=2pt] at ({2*\colW}, -0.1)
     {\textbf{MonoRace}~\cite{bahnam2026monorace}\\ \scriptsize A2RL 2025 winner; segmentation $+$ QuAdGate corners\\[0.25em]
      \textbf{[$\bullet$ This work]}\\ \scriptsize ring-mask $+$ QuAdGate; SAM2 label refinement\\ \scriptsize \textbf{82\,\% TII / 39\,\% real} \,$\Rightarrow$\, method right, generalisation failing};
-  % bottom rule + caption-style footnote constrained to total width
+  % bottom rule
   \draw[color=rule, line width=0.6pt] (-0.05, -4.05) -- (3*\colW-0.05, -4.05);
-  \node[anchor=north west, text width=\totalW cm, font=\tiny\color{muted}, inner sep=2pt] at (-0.05, -4.10)
-    {Grouping by output representation. The hybrid column is the geometrically-justified place to stand for PnP-driven racing;
-     the keypoint column is what is currently winning in raw real-world numbers.};
 \end{tikzpicture}
-\caption*{\footnotesize\textbf{Figure 7.} Where this brief sits in the 2024--2026 method landscape. Pure-mask methods (teal)
-optimise an illumination-robust input representation but rely on classical post-processing for pose. Pure-keypoint methods
-(coral) regress 4--8 corner coordinates directly and are the current podium-winning approach on real A2RL hardware. Hybrid
-methods (forest) keep both --- a segmentation mask for descriptor matching and corner keypoints for PnP. This repository is
-in the hybrid column.}
+\end{adjustbox}
+\caption{Where this brief sits in the 2024--2026 method landscape. Pure-mask methods (teal) optimise an illumination-robust
+input representation but rely on classical post-processing for pose. Pure-keypoint methods (coral) regress 4--8 corner
+coordinates directly and are the current podium-winning approach on real A2RL hardware. Hybrid methods (forest) keep both ---
+a segmentation mask for descriptor matching and corner keypoints for PnP. This repository sits in the hybrid column;
+the keypoint column is what is currently winning in raw real-world numbers.}
 \label{fig:sotamap}
 \end{figure}%
 }
@@ -568,8 +527,6 @@ Competition-data collection & 5--10\,min FPV footage of the actual competition g
 \section{Problem statement}
 
 The repository's two-stage gate detector (DeepLabV3+ or a custom GateNet U-Net, followed by the QuAdGate sub-pixel corner extractor) is trained end-to-end on the TII drone-racing dataset~\cite{tii2025dataset}. On the held-out TII split the segmentation model achieves $\sim$82\,\% detection with mean reprojection error 5.0\,px. On a separately recorded real-world flight using the same drone hardware, detection collapses to 39\,\% and reprojection error climbs to 30.7\,px. The README itself lists the consequences as a known issue: the model ``segments non-gate regions as gates,'' degrading both detection and PnP pose estimation.\footnote{\code{README.md:48}.}
-
-\FigDomainGap
 
 This is the textbook \emph{domain shift} problem in drone-racing perception: training data is dominated by one environment and one gate appearance, and the network specialises rather than generalises. \cite{qiao2024continual} document the same effect under nothing more than illumination change in a controlled drone arena, and propose a continual-learning rehearsal scheme to mitigate forgetting across lighting conditions.
 
