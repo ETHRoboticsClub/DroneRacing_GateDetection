@@ -34,6 +34,30 @@ class FlightBenchmark:
     visuals: list[FlightSample] = field(default_factory=list)
     fps: float = 0.0
     n_total: int = 0
+    prior_mode: str = "gt"                 # which QuAdGate prior was used
+
+
+# CORNER_TYPES order from data/labels.py:33-36 — must match parse_pixel_corners.
+# Used by prior_mode="none" to build a default centred-gate prior.
+def _default_prior(img_size: int, *, inner_frac: float = 0.125, outer_scale: float = 1.4) -> np.ndarray:
+    """Build an (8, 2) default prior at the image centre.
+
+    Layout matches CORNER_TYPES = [outer_TL, outer_TR, outer_BR, outer_BL,
+                                   inner_TL, inner_TR, inner_BR, inner_BL]
+    """
+    cx = cy = img_size / 2.0
+    inner_h = img_size * inner_frac          # default 48 px at 384²
+    outer_h = inner_h * outer_scale          # 1.4× → ~67 px at 384²
+    return np.array([
+        [cx - outer_h, cy - outer_h],
+        [cx + outer_h, cy - outer_h],
+        [cx + outer_h, cy + outer_h],
+        [cx - outer_h, cy + outer_h],
+        [cx - inner_h, cy - inner_h],
+        [cx + inner_h, cy - inner_h],
+        [cx + inner_h, cy + inner_h],
+        [cx - inner_h, cy + inner_h],
+    ], dtype=np.float64)
 
 
 def _drone_gate_distance(row, n_gates: int = 4) -> float:
@@ -56,15 +80,39 @@ def benchmark_flight(
     *,
     stride: int = 30,
     n_visuals: int = 16,
+    prior_mode: str = "gt",
+    noisy_sigma_px: float = 30.0,
+    seed: int = 42,
 ) -> FlightBenchmark:
     """Run GateNet + QuAdGate on every ``stride``-th frame of one flight.
 
     The optional ``<flight>_cam_ts_sync.csv`` (with ``drone_x/y/z`` and
     ``gateN_int_x/y/z`` columns) enables a distance-sliced report; if absent,
     distances are NaN and the slicing step is skipped by the caller.
+
+    ``prior_mode`` controls what is fed to QuAdGate as the prior corner set:
+      - ``"gt"``    : ground-truth corners from the label file (the original
+                      benchmarking convenience; over-states blind detection).
+      - ``"noisy"`` : GT corners + isotropic Gaussian noise with std
+                      ``noisy_sigma_px`` per coordinate. Models EKF prior drift.
+      - ``"none"``  : a centred default prior independent of the label —
+                      forces QuAdGate to do candidate-only matching as it would
+                      in a deployed cold-start situation.
+    EKF mode (carry the previous detection forward) is intentionally out of
+    scope here; it carries state across frames and gets its own implementation.
     """
+    if prior_mode not in {"gt", "noisy", "none"}:
+        raise ValueError(f"prior_mode must be one of {{gt, noisy, none}}; got {prior_mode!r}")
+
     cam_dir, lbl_dir, csv_path = find_flight_paths(flight_root)
     flight_name = os.path.basename(os.path.normpath(str(flight_root)))
+
+    # Deterministic noise across runs — uses one np.random.RandomState seeded
+    # at function entry so re-running with the same seed gives the same per-
+    # frame jitter (CLAUDE.md §0: "every experimental claim needs a fixed seed").
+    rng = np.random.RandomState(seed)
+    img_size = predictor.img_size
+    none_prior = _default_prior(img_size) if prior_mode == "none" else None
 
     csv_df = None
     if csv_path:
@@ -92,15 +140,18 @@ def benchmark_flight(
             # than abort the whole benchmark.
             continue
 
-        # Use GT corners as the QuAdGate prior. This is a benchmarking
-        # convenience — at deployment the prior would come from the EKF /
-        # previous-frame estimate. Using GT measures the segmentation +
-        # corner refinement quality without confounding from prior drift.
-        # Only the FIRST gate's priors are passed; multi-gate scenes are
-        # implicitly evaluated against the closest-matching GT gate by
-        # inner_corner_error below.
+        # Build the QuAdGate prior according to prior_mode (see function
+        # docstring for the trade-offs). Only the FIRST gate's priors are
+        # passed; multi-gate scenes are implicitly evaluated against the
+        # closest-matching GT gate by inner_corner_error below.
         gt_gates = parse_pixel_corners(lbl_path, predictor.img_size)
-        detected = detect_corners(pred, gt_gates[0]) if gt_gates else None
+        if prior_mode == "gt":
+            prior = gt_gates[0] if gt_gates else None
+        elif prior_mode == "noisy":
+            prior = (gt_gates[0] + rng.randn(*gt_gates[0].shape) * noisy_sigma_px) if gt_gates else None
+        else:  # "none"
+            prior = none_prior
+        detected = detect_corners(pred, prior) if prior is not None else None
         detected_mask.append(detected is not None)
         cerr = inner_corner_error(detected, gt_gates)
         corner_errors.append(cerr)
@@ -126,4 +177,5 @@ def benchmark_flight(
         visuals=visuals,
         fps=(len(corner_errors) / elapsed) if elapsed > 0 else float("nan"),
         n_total=len(detected_mask),
+        prior_mode=prior_mode,
     )

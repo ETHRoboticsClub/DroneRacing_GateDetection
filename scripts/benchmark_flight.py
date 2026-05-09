@@ -76,6 +76,13 @@ def main() -> None:
     p.add_argument("--stride",   type=int, default=30)
     p.add_argument("--n",        type=int, default=16, help="rows in visual grid")
     p.add_argument("--out",      type=str, default="flight_benchmark.png")
+    p.add_argument("--prior-mode", type=str, default="gt",
+                   choices=["gt", "noisy", "none"],
+                   help="QuAdGate prior source: gt (over-states detection rate), noisy (GT + Gaussian σ px), none (centred default — blind)")
+    p.add_argument("--noisy-sigma-px", type=float, default=30.0,
+                   help="Per-coordinate Gaussian σ for prior_mode=noisy (default 30 px)")
+    p.add_argument("--seed", type=int, default=42,
+                   help="seed for noisy-prior jitter")
     args = p.parse_args()
 
     cfg = load_config(args.config)
@@ -93,10 +100,17 @@ def main() -> None:
           f"val_loss={predictor.checkpoint_meta['val_loss']:.4f})")
     print(f"Flight     : {os.path.basename(os.path.normpath(args.flight))}")
 
-    bench = benchmark_flight(predictor, args.flight,
-                             stride=args.stride, n_visuals=args.n)
+    bench = benchmark_flight(
+        predictor, args.flight,
+        stride=args.stride, n_visuals=args.n,
+        prior_mode=args.prior_mode,
+        noisy_sigma_px=args.noisy_sigma_px,
+        seed=args.seed,
+    )
 
     print(f"Frames     : {bench.n_total} sampled (stride={args.stride})")
+    print(f"Prior mode : {bench.prior_mode}"
+          f"{f' (σ={args.noisy_sigma_px:.1f} px)' if bench.prior_mode == 'noisy' else ''}")
     _print_summary(bench)
     _print_distance_table(bench)
 
