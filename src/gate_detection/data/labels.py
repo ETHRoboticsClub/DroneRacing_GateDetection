@@ -180,28 +180,70 @@ def assign_corner_types(corners_outer: np.ndarray, corners_inner: np.ndarray) ->
 def parse_pixel_corners(
     lbl_path: str,
     img_size: int,
+    *,
+    synth_outer: bool = False,
+    synth_scale: float = 1.4,
 ) -> list[np.ndarray]:
     """Return one ``(8, 2)`` corner array per gate in pixel coordinates.
 
-    Gates without outer corners (17-col labels) or fewer than 3 visible
-    inner/outer corners are skipped.
+    By default, gates without outer corners (17-col labels) or fewer than 3
+    visible inner/outer corners are skipped. Set ``synth_outer=True`` to
+    synthesise outer corners as ``centroid + synth_scale × (inner - centroid)``
+    when only inner corners are present — matches the convention used in
+    scripts/benchmark_pnp.py:79-81 and unblocks 17-col labels (the format
+    TII v3.0.0 actually ships) without requiring scripts/prepare_labels.py
+    (which is a known-missing script tracked as plan P0-4).
+
+    Returns an empty list if no gate parses; emits a single ``[WARN]`` line
+    when that empty return is the result of skipping (per CLAUDE.md §6,
+    no silent fallbacks).
     """
     if not lbl_path or not os.path.exists(lbl_path):
         return []
 
+    raw = parse_gates(lbl_path)
+    skipped_no_outer = 0
+    skipped_too_few_visible = 0
     out: list[np.ndarray] = []
-    for g in parse_gates(lbl_path):
-        if g["outer"] is None:
-            continue
-        inner_visible = np.array(
+    for g in raw:
+        inner_visible_pts = np.array(
             [[x, y] for (x, y), v in zip(g["inner"], g["inner_vis"]) if v > 0],
             dtype=np.float32,
         )
-        outer_visible = np.array(
-            [[x, y] for (x, y), v in zip(g["outer"], g["outer_vis"]) if v > 0],
-            dtype=np.float32,
+        if g["outer"] is None:
+            if not synth_outer:
+                skipped_no_outer += 1
+                continue
+            if len(inner_visible_pts) < 3:
+                skipped_too_few_visible += 1
+                continue
+            # Synthesise outer corners from the visible inner corners only,
+            # matching the offline 17→29-col conversion in benchmark_pnp.
+            centroid = inner_visible_pts.mean(axis=0)
+            outer_visible_pts = centroid + synth_scale * (inner_visible_pts - centroid)
+        else:
+            outer_visible_pts = np.array(
+                [[x, y] for (x, y), v in zip(g["outer"], g["outer_vis"]) if v > 0],
+                dtype=np.float32,
+            )
+            if len(inner_visible_pts) < 3 or len(outer_visible_pts) < 3:
+                skipped_too_few_visible += 1
+                continue
+
+        out.append(assign_corner_types(
+            outer_visible_pts * img_size, inner_visible_pts * img_size,
+        ))
+
+    if not out and raw and (skipped_no_outer or skipped_too_few_visible):
+        # Silent-empty-return is exactly the failure mode CLAUDE.md §6 forbids;
+        # downstream callers like evaluation/benchmark.py infer "no gate label"
+        # and report 0% detection without telling the user the LABEL was the
+        # problem, not the detector. Announce the skip reason once per call.
+        print(
+            f"[WARN] parse_pixel_corners({os.path.basename(lbl_path)}, synth_outer={synth_outer}): "
+            f"all {len(raw)} gates skipped "
+            f"(no_outer={skipped_no_outer}, too_few_visible={skipped_too_few_visible}). "
+            "If this is a TII 17-col label, pass synth_outer=True.",
+            flush=True,
         )
-        if len(inner_visible) < 3 or len(outer_visible) < 3:
-            continue
-        out.append(assign_corner_types(outer_visible * img_size, inner_visible * img_size))
     return out

@@ -144,7 +144,12 @@ def benchmark_flight(
         # docstring for the trade-offs). Only the FIRST gate's priors are
         # passed; multi-gate scenes are implicitly evaluated against the
         # closest-matching GT gate by inner_corner_error below.
-        gt_gates = parse_pixel_corners(lbl_path, predictor.img_size)
+        # synth_outer=True so 17-col TII labels (which ship inner-only) parse
+        # into the (8, 2) format QuAdGate's prior expects. Without this every
+        # gate is silently skipped — see labels.py:parse_pixel_corners docstring.
+        gt_gates = parse_pixel_corners(
+            lbl_path, predictor.img_size, synth_outer=True,
+        )
         if prior_mode == "gt":
             prior = gt_gates[0] if gt_gates else None
         elif prior_mode == "noisy":
