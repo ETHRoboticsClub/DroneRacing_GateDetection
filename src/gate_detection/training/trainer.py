@@ -26,6 +26,7 @@ from transformers import get_polynomial_decay_schedule_with_warmup
 
 from gate_detection.config import get_device
 from gate_detection.data.dataset import GateDataset
+from gate_detection.losses.keypoint import soft_argmax_2d, weighted_heatmap_mse
 from gate_detection.losses.segmentation import gate_loss
 from gate_detection.models import ModelConfig, SegmentationModelWrapper, build_model
 from gate_detection.paths import CHECKPOINTS_ROOT, SAM_ROOT, SYN_ROOT
@@ -53,6 +54,9 @@ def build_dataloaders(
     augment: bool = True,
     use_sam_masks: bool = True,
     imagenet_norm: bool = False,
+    keypoint_heatmap: bool = False,
+    heatmap_sigma: float = 3.0,
+    n_keypoints: int = 4,
     num_workers_train: int = 12,
     num_workers_val: int = 12,
     prefetch_factor: int = 4,
@@ -63,8 +67,18 @@ def build_dataloaders(
     train_dirs = [str(data_root / "train")]
     val_dirs   = [str(data_root / "val")]
 
-    train_ds = GateDataset(train_dirs, img_size=img_size, augment=augment,  use_sam_masks=use_sam_masks, imagenet_norm=imagenet_norm)
-    val_ds   = GateDataset(val_dirs,   img_size=img_size, augment=False, use_sam_masks=use_sam_masks, imagenet_norm=imagenet_norm)
+    train_ds = GateDataset(
+        train_dirs, img_size=img_size, augment=augment,
+        use_sam_masks=use_sam_masks, imagenet_norm=imagenet_norm,
+        keypoint_heatmap=keypoint_heatmap, heatmap_sigma=heatmap_sigma,
+        n_keypoints=n_keypoints,
+    )
+    val_ds = GateDataset(
+        val_dirs, img_size=img_size, augment=False,
+        use_sam_masks=use_sam_masks, imagenet_norm=imagenet_norm,
+        keypoint_heatmap=keypoint_heatmap, heatmap_sigma=heatmap_sigma,
+        n_keypoints=n_keypoints,
+    )
 
     # persistent_workers avoids re-spawning the worker pool every epoch
     # (cheap dataset, expensive fork startup); prefetch_factor keeps the
@@ -104,24 +118,65 @@ def train_epoch(
     use_amp: bool = False,
     amp_dtype: torch.dtype = torch.float16,
     channels_last: bool = False,
+    keypoint_loss_weight: float = 0.0,
+    keypoint_fg_weight: float = 10.0,
     desc: str = "train",
-) -> tuple[float, float]:
+) -> tuple[float, float, float]:
+    """One epoch of training.
+
+    When ``keypoint_loss_weight > 0`` the loader is expected to yield 4-tuples
+    ``(imgs, masks, kp_targets, kp_vis)`` and the combined loss
+    ``L_seg + keypoint_loss_weight × L_heatmap`` is back-propagated. The
+    third return value is the mean per-batch keypoint loss (0.0 in the
+    seg-only branch) so the caller can log both components.
+    """
+    multi_task = keypoint_loss_weight > 0.0
     model.train()
     total_loss = 0.0
+    total_kp_loss = 0.0
     n_samples = 0
     iou_metric = BinaryJaccardIndex(threshold=iou_threshold).to(device)
     progress = tqdm(loader, desc=desc, leave=False)
-    for imgs, masks in progress:
+    for batch in progress:
+        if multi_task:
+            imgs, masks, kp_targets, kp_vis = batch
+            kp_targets = kp_targets.to(device, non_blocking=True)
+            kp_vis = kp_vis.to(device, non_blocking=True)
+        else:
+            imgs, masks = batch
         imgs = imgs.to(device, non_blocking=True)
         masks = masks.to(device, non_blocking=True)
         if channels_last and imgs.ndim == 4:
             imgs = imgs.contiguous(memory_format=torch.channels_last)
         optimizer.zero_grad()
         with torch.autocast(device_type=device, dtype=amp_dtype, enabled=use_amp):
-            outputs = model(imgs)
-            loss = gate_loss(outputs, masks,
-                             deep_supervision_weights=deep_supervision_weights,
-                             bce_weight=bce_weight)
+            if multi_task:
+                outputs, kp_pred = model.forward_multi(imgs)
+                if kp_pred is None:
+                    raise RuntimeError(
+                        "keypoint_loss_weight > 0 but model has no keypoint "
+                        "head — set model.keypoint_head=true in the config."
+                    )
+                seg_loss = gate_loss(
+                    outputs, masks,
+                    deep_supervision_weights=deep_supervision_weights,
+                    bce_weight=bce_weight,
+                )
+                # Heatmap MSE runs in fp32 like BCE — bf16 has plenty of
+                # range, but the upweighting near the peak amplifies any
+                # rounding noise and the 0.x → 0.0 collapse breaks gradients.
+                with torch.autocast(device_type=device, enabled=False):
+                    kp_loss = weighted_heatmap_mse(
+                        kp_pred.float(), kp_targets.float(), kp_vis,
+                        fg_weight=keypoint_fg_weight,
+                    )
+                loss = seg_loss + keypoint_loss_weight * kp_loss
+            else:
+                outputs = model(imgs)
+                loss = gate_loss(outputs, masks,
+                                 deep_supervision_weights=deep_supervision_weights,
+                                 bce_weight=bce_weight)
+                kp_loss = torch.tensor(0.0, device=device)
         # GradScaler is only meaningful for fp16 (small dynamic range);
         # for bf16 the caller passes scaler.is_enabled() == False and we
         # take the plain backward path.
@@ -137,6 +192,7 @@ def train_epoch(
         if scheduler is not None:
             scheduler.step()
         total_loss += loss.item() * imgs.size(0)
+        total_kp_loss += float(kp_loss.item()) * imgs.size(0)
         n_samples += imgs.size(0)
         # Online IoU is computed on the full-resolution head output (last
         # entry of the deep-supervision tuple), to match deployment.
@@ -146,7 +202,11 @@ def train_epoch(
             loss=f"{total_loss / max(n_samples, 1):.4f}",
             iou=f"{float(iou_metric.compute()):.4f}",
         )
-    return total_loss / max(n_samples, 1), float(iou_metric.compute())
+    return (
+        total_loss / max(n_samples, 1),
+        float(iou_metric.compute()),
+        total_kp_loss / max(n_samples, 1),
+    )
 
 
 @torch.no_grad()
@@ -161,32 +221,92 @@ def validate(
     use_amp: bool = False,
     amp_dtype: torch.dtype = torch.float16,
     channels_last: bool = False,
+    keypoint_loss_weight: float = 0.0,
+    keypoint_fg_weight: float = 10.0,
+    soft_argmax_beta: float = 100.0,
     desc: str = "val",
-) -> tuple[float, float]:
+) -> tuple[float, float, float, float]:
+    """One validation epoch.
+
+    Returns ``(val_loss, val_iou, val_kp_loss, val_corner_dist)`` where
+    ``val_corner_dist`` is the mean Euclidean pixel distance between
+    soft-argmax-decoded predicted corners and the soft-argmax of the GT
+    heatmap, masked by visibility. Both keypoint quantities are 0.0 when
+    ``keypoint_loss_weight == 0``.
+    """
+    multi_task = keypoint_loss_weight > 0.0
     model.eval()
     total_loss = 0.0
+    total_kp_loss = 0.0
+    total_corner_dist = 0.0
+    n_visible_corners = 0
     n_samples = 0
     iou_metric = BinaryJaccardIndex(threshold=iou_threshold).to(device)
     progress = tqdm(loader, desc=desc, leave=False)
-    for imgs, masks in progress:
+    for batch in progress:
+        if multi_task:
+            imgs, masks, kp_targets, kp_vis = batch
+            kp_targets = kp_targets.to(device, non_blocking=True)
+            kp_vis = kp_vis.to(device, non_blocking=True)
+        else:
+            imgs, masks = batch
         imgs = imgs.to(device, non_blocking=True)
         masks = masks.to(device, non_blocking=True)
         if channels_last and imgs.ndim == 4:
             imgs = imgs.contiguous(memory_format=torch.channels_last)
         with torch.autocast(device_type=device, dtype=amp_dtype, enabled=use_amp):
-            outputs = model(imgs)
-            loss = gate_loss(outputs, masks,
-                             deep_supervision_weights=deep_supervision_weights,
-                             bce_weight=bce_weight)
+            if multi_task:
+                outputs, kp_pred = model.forward_multi(imgs)
+                seg_loss = gate_loss(
+                    outputs, masks,
+                    deep_supervision_weights=deep_supervision_weights,
+                    bce_weight=bce_weight,
+                )
+                with torch.autocast(device_type=device, enabled=False):
+                    kp_loss = weighted_heatmap_mse(
+                        kp_pred.float(), kp_targets.float(), kp_vis,
+                        fg_weight=keypoint_fg_weight,
+                    )
+                loss = seg_loss + keypoint_loss_weight * kp_loss
+            else:
+                outputs = model(imgs)
+                loss = gate_loss(outputs, masks,
+                                 deep_supervision_weights=deep_supervision_weights,
+                                 bce_weight=bce_weight)
+                kp_loss = torch.tensor(0.0, device=device)
+                kp_pred = None
         total_loss += loss.item() * imgs.size(0)
+        total_kp_loss += float(kp_loss.item()) * imgs.size(0)
         n_samples += imgs.size(0)
         pred_full = outputs[-1]
         iou_metric.update(pred_full, masks.to(torch.int64))
+
+        if multi_task and kp_pred is not None:
+            # Mean visibility-masked Euclidean distance between
+            # soft-argmax(pred) and soft-argmax(target). The GT heatmap
+            # is a clean σ=3 Gaussian so soft-argmax recovers the centre
+            # to far-sub-pixel — the metric isolates pred error.
+            pred_xy = soft_argmax_2d(kp_pred.float(), beta=soft_argmax_beta)   # (B, K, 2)
+            tgt_xy  = soft_argmax_2d(kp_targets.float(), beta=soft_argmax_beta)
+            d = (pred_xy - tgt_xy).pow(2).sum(dim=-1).sqrt()                   # (B, K)
+            valid = kp_vis.float()                                              # (B, K)
+            total_corner_dist += float((d * valid).sum().item())
+            n_visible_corners += int(valid.sum().item())
+
         progress.set_postfix(
             loss=f"{total_loss / max(n_samples, 1):.4f}",
             iou=f"{float(iou_metric.compute()):.4f}",
         )
-    return total_loss / max(n_samples, 1), float(iou_metric.compute())
+    val_corner_dist = (
+        total_corner_dist / n_visible_corners
+        if n_visible_corners > 0 else 0.0
+    )
+    return (
+        total_loss / max(n_samples, 1),
+        float(iou_metric.compute()),
+        total_kp_loss / max(n_samples, 1),
+        val_corner_dist,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +345,11 @@ def train(
     prefetch_factor: int = 4,
     use_sam_masks: bool = True,
     imagenet_norm: bool = False,
+    keypoint_head: bool = False,
+    n_keypoints: int = 4,
+    keypoint_loss_weight: float = 0.0,
+    keypoint_fg_weight: float = 10.0,
+    heatmap_sigma: float = 3.0,
     seed: int = 42,
     data_root: str | os.PathLike | None = None,
     checkpoint_dir: str | os.PathLike = CHECKPOINTS_ROOT,
@@ -280,7 +405,28 @@ def train(
         encoder_name=encoder_name,
         encoder_weights=encoder_weights,
         dropout_p=dropout_p,
+        keypoint_head=keypoint_head,
+        n_keypoints=n_keypoints,
     )
+    # Both directions are inconsistent at the dataloader / forward boundary
+    # (dataset emits 4-tuples iff keypoint_head; train_epoch unpacks 4-tuples
+    # iff keypoint_loss_weight > 0). Fail fast at config-time with a clear
+    # message rather than crash on the first batch with a tuple-unpacking
+    # error or a "model has no keypoint head" RuntimeError.
+    if keypoint_head and keypoint_loss_weight <= 0.0:
+        raise ValueError(
+            "keypoint_head=True requires keypoint_loss_weight > 0 — an "
+            "unsupervised keypoint head still emits 4-tuples from the "
+            "dataloader, which the trainer's seg-only path does not unpack. "
+            "Set loss.keypoint_weight (typical 1.0) in the config."
+        )
+    if (not keypoint_head) and keypoint_loss_weight > 0.0:
+        raise ValueError(
+            "keypoint_loss_weight > 0 requires model.keypoint_head=true; "
+            "the trainer would call model.forward_multi() which returns "
+            "kp_pred=None on a single-head model and crash with a clear "
+            "RuntimeError on the first batch."
+        )
     model: SegmentationModelWrapper = build_model(model_cfg).to(device)
     # Backbones that produce a single output (e.g. DeepLabV3+) carry
     # ds_weights=(1.0,); only GateNet uses real deep supervision and thus
@@ -308,12 +454,21 @@ def train(
         augment=augment,
         use_sam_masks=use_sam_masks,
         imagenet_norm=imagenet_norm,
+        keypoint_heatmap=keypoint_head,
+        heatmap_sigma=heatmap_sigma,
+        n_keypoints=n_keypoints,
         num_workers_train=num_workers_train,
         num_workers_val=num_workers_val,
         prefetch_factor=prefetch_factor,
     )
     print(f"Train: {len(train_ds)} samples  Val: {len(val_ds)} samples")
     print(f"Data : use_sam_masks={use_sam_masks}, imagenet_norm={imagenet_norm}, augment={augment}")
+    if keypoint_head:
+        print(
+            f"Multi-task: keypoint_head=True n_keypoints={n_keypoints} "
+            f"loss_weight={keypoint_loss_weight} fg_weight={keypoint_fg_weight} "
+            f"sigma_px={heatmap_sigma}"
+        )
 
     # GradScaler enabled ONLY for CUDA + fp16. bf16 has the same exponent
     # range as fp32, so gradients never underflow and scaling is unnecessary.
@@ -359,7 +514,7 @@ def train(
     best_state_dict: dict[str, torch.Tensor] | None = None
 
     for epoch in range(1, epochs + 1):
-        train_loss, train_iou = train_epoch(
+        train_loss, train_iou, train_kp_loss = train_epoch(
             model,
             train_loader,
             optimizer,
@@ -372,10 +527,12 @@ def train(
             use_amp=use_amp,
             amp_dtype=resolved_amp_dtype,
             channels_last=channels_last,
+            keypoint_loss_weight=keypoint_loss_weight,
+            keypoint_fg_weight=keypoint_fg_weight,
             desc=f"Epoch {epoch:3d}/{epochs} [train]",
         )
 
-        val_loss, val_iou = validate(
+        val_loss, val_iou, val_kp_loss, val_corner_dist = validate(
             model,
             val_loader,
             device,
@@ -385,6 +542,8 @@ def train(
             use_amp=use_amp,
             amp_dtype=resolved_amp_dtype,
             channels_last=channels_last,
+            keypoint_loss_weight=keypoint_loss_weight,
+            keypoint_fg_weight=keypoint_fg_weight,
             desc=f"Epoch {epoch:3d}/{epochs} [val]  ",
         )
 
@@ -394,6 +553,11 @@ def train(
             f"train_loss={train_loss:.4f}  val_loss={val_loss:.4f}",
         )
         print(f"  IoU: train={train_iou:.4f}  val={val_iou:.4f}")
+        if keypoint_loss_weight > 0.0:
+            print(
+                f"  KP : train_kp_loss={train_kp_loss:.4f}  val_kp_loss={val_kp_loss:.4f}  "
+                f"val_corner_dist={val_corner_dist:.2f} px"
+            )
 
         # Primary selection metric: validation IoU.
         # Tie-breaker: lower validation loss.
@@ -429,12 +593,15 @@ def train(
                         "encoder_name": model_cfg.encoder_name,
                         "encoder_weights": model_cfg.encoder_weights,
                         "dropout_p": model_cfg.dropout_p,
+                        "keypoint_head": model_cfg.keypoint_head,
+                        "n_keypoints": model_cfg.n_keypoints,
                     },
                     # Data-preprocessing fields the predictor must replay
                     # at inference for parity. Kept separate from
                     # model_config because they are not architectural.
                     "data_config": {
                         "imagenet_norm": imagenet_norm,
+                        "heatmap_sigma": heatmap_sigma,
                     },
                     "seed": seed,
                     "optimizer": optimizer.state_dict(),
@@ -463,9 +630,12 @@ def train(
                 "encoder_name": model_cfg.encoder_name,
                 "encoder_weights": model_cfg.encoder_weights,
                 "dropout_p": model_cfg.dropout_p,
+                "keypoint_head": model_cfg.keypoint_head,
+                "n_keypoints": model_cfg.n_keypoints,
             },
             "data_config": {
                 "imagenet_norm": imagenet_norm,
+                "heatmap_sigma": heatmap_sigma,
             },
             "seed": seed,
             "val_loss": best_val_loss,

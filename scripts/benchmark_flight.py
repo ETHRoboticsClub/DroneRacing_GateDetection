@@ -77,12 +77,17 @@ def main() -> None:
     p.add_argument("--n",        type=int, default=16, help="rows in visual grid")
     p.add_argument("--out",      type=str, default="flight_benchmark.png")
     p.add_argument("--prior-mode", type=str, default="gt",
-                   choices=["gt", "noisy", "none"],
-                   help="QuAdGate prior source: gt (over-states detection rate), noisy (GT + Gaussian σ px), none (centred default — blind)")
+                   choices=["gt", "noisy", "none", "model", "model_direct"],
+                   help=("QuAdGate prior source: gt (over-states detection rate), "
+                         "noisy (GT + Gaussian σ px), none (centred default — blind), "
+                         "model (predictor's keypoint head supplies the prior), "
+                         "model_direct (use keypoint-head corners as the detected output, no QuAdGate)"))
     p.add_argument("--noisy-sigma-px", type=float, default=30.0,
                    help="Per-coordinate Gaussian σ for prior_mode=noisy (default 30 px)")
     p.add_argument("--seed", type=int, default=42,
                    help="seed for noisy-prior jitter")
+    p.add_argument("--keypoint-conf-threshold", type=float, default=0.3,
+                   help="min per-channel heatmap peak for prior_mode=model{,_direct} to accept the prediction; below this the frame is treated as a non-detection")
     args = p.parse_args()
 
     cfg = load_config(args.config)
@@ -106,6 +111,7 @@ def main() -> None:
         prior_mode=args.prior_mode,
         noisy_sigma_px=args.noisy_sigma_px,
         seed=args.seed,
+        keypoint_conf_threshold=args.keypoint_conf_threshold,
     )
 
     print(f"Frames     : {bench.n_total} sampled (stride={args.stride})")

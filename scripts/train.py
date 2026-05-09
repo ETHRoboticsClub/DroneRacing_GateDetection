@@ -31,6 +31,7 @@ def main() -> None:
     perf = cfg["train"].get("performance", {})
     use_sam_masks = cfg["data"].get("use_sam_masks", True)
     data_root = str(SAM_ROOT if use_sam_masks else SYN_ROOT)
+    loss_cfg = cfg["loss"]
 
     train(
         epochs=             args.epochs     if args.epochs is not None     else cfg["train"]["epochs"],
@@ -47,11 +48,16 @@ def main() -> None:
         encoder_name=       cfg["model"].get("encoder_name", "resnet34"),
         encoder_weights=    cfg["model"].get("encoder_weights", None),
         dropout_p=          cfg["model"].get("dropout_p", 0.0),
+        keypoint_head=      cfg["model"].get("keypoint_head", False),
+        n_keypoints=        cfg["model"].get("n_keypoints", 4),
+        keypoint_loss_weight=loss_cfg.get("keypoint_weight", 0.0),
+        keypoint_fg_weight= loss_cfg.get("keypoint_fg_weight", 10.0),
+        heatmap_sigma=      cfg["data"].get("heatmap_sigma", 3.0),
         optimizer_name=     cfg["train"].get("optimizer", "adamw"),
         sgd_momentum=       cfg["train"].get("sgd_momentum", 0.9),
         weight_decay=       cfg["train"].get("weight_decay", 1e-4),
-        deep_supervision_weights=tuple(cfg["loss"]["deep_supervision_weights"]),
-        bce_weight=         cfg["loss"]["bce_weight"],
+        deep_supervision_weights=tuple(loss_cfg["deep_supervision_weights"]),
+        bce_weight=         loss_cfg["bce_weight"],
         iou_threshold=      cfg["eval"]["threshold"],
         warmup_ratio=       sched.get("warmup_ratio", 0.1),
         polynomial_power=   sched.get("power", 1.0),

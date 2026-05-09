@@ -11,6 +11,11 @@ def build_model(cfg: ModelConfig) -> SegmentationModelWrapper:
     """Construct a wrapped segmentation model from :class:`ModelConfig`."""
     name = cfg.name.lower()
     if name == "gatenet":
+        if cfg.keypoint_head:
+            raise NotImplementedError(
+                "keypoint_head is wired only for deeplabv3plus today; "
+                "set model.name=deeplabv3plus or disable model.keypoint_head."
+            )
         return build_gatenet(
             width_factor=cfg.width_factor,
             dropout_p=cfg.dropout_p,
@@ -20,5 +25,7 @@ def build_model(cfg: ModelConfig) -> SegmentationModelWrapper:
             encoder_name=cfg.encoder_name,
             encoder_weights=cfg.encoder_weights,
             dropout_p=cfg.dropout_p,
+            keypoint_head=cfg.keypoint_head,
+            n_keypoints=cfg.n_keypoints,
         )
     raise ValueError(f"Unknown model name: {cfg.name}")

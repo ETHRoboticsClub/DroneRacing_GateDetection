@@ -1,0 +1,68 @@
+# Plan P1-1: multi-task DeepLabV3+ with a 4-channel keypoint head.
+#
+# Inherits the winning settings from deeplabv3plus_imagenet_nonorm.yaml
+# (val IoU 0.8840, see report 05) and adds:
+#   - model.keypoint_head: true → 4-channel inner-corner heatmap head
+#     tapped off the ASPP decoder feature map.
+#   - data.heatmap_sigma: 3.0 → Gaussian σ in pixels at 384² (≈9 px wide).
+#   - loss.keypoint_weight: 1.0 → α=β=1 starting point.
+#   - loss.keypoint_fg_weight: 10.0 → upweights near-peak pixels in MSE
+#     so the foreground/background imbalance does not collapse the head
+#     toward all-zero output (Newell et al. 2016 hourglass convention).
+#
+# Use: python scripts/train.py --config configs/deeplabv3plus_keypoint.yaml
+
+data:
+  img_size: 384
+  sam_subdir: sam_masked
+  use_sam_masks: true
+  imagenet_norm: false
+  heatmap_sigma: 3.0                    # Gaussian σ_px for keypoint targets
+
+model:
+  name: deeplabv3plus
+  width_factor: 4
+  encoder_weights: imagenet
+  dropout_p: 0.1
+  keypoint_head: true                   # ← P1-1 multi-task knob
+  n_keypoints: 4                        # inner_TL, inner_TR, inner_BR, inner_BL
+
+loss:
+  deep_supervision_weights: [1]
+  bce_weight: 2.0
+  keypoint_weight: 1.0                  # β in L = L_seg + β·L_kp
+  keypoint_fg_weight: 10.0              # weight = fg_weight·target + 1
+
+train:
+  epochs: 100
+  batch_size: 8
+  lr: 3.0e-4
+  optimizer: adamw
+  sgd_momentum: 0.9
+  weight_decay: 1.0e-4
+  seed: 42
+  num_workers_train: 16
+  num_workers_val: 16
+  scheduler:
+    type: polynomial_hf
+    warmup_ratio: 0.1
+    power: 0.9
+    lr_end: 1.0e-6
+  performance:
+    compile: true
+    compile_mode: max-autotune
+    amp: true
+    amp_dtype: bf16
+    channels_last: true
+    cudnn_benchmark: false
+    matmul_precision: high
+    prefetch_factor: 4
+  checkpoint_name: best_deeplabv3plus_keypoint.pth
+
+eval:
+  threshold: 0.5
+
+postprocess:
+  max_dist: 100.0
+  ransac_threshold: 5.0
+  max_translation: 150.0

@@ -63,12 +63,15 @@ def _load_model_config(
     encoder_name: str,
     encoder_weights: str | None,
     dropout_p: float,
+    keypoint_head: bool,
+    n_keypoints: int,
 ) -> ModelConfig:
     """Resolve model config from checkpoint first, then explicit args.
 
     The saved ``model_config`` is authoritative — every architectural field
     that affects the state-dict layout (including ``dropout_p``, which gates
-    the dropout-wrapped segmentation head) must round-trip from it.
+    the dropout-wrapped segmentation head, and ``keypoint_head`` /
+    ``n_keypoints``, which add the multi-task head) must round-trip from it.
     """
     saved = ckpt.get("model_config", {}) if isinstance(ckpt, dict) else {}
     return ModelConfig(
@@ -77,6 +80,8 @@ def _load_model_config(
         encoder_name=saved.get("encoder_name", encoder_name),
         encoder_weights=saved.get("encoder_weights", encoder_weights),
         dropout_p=float(saved.get("dropout_p", dropout_p)),
+        keypoint_head=bool(saved.get("keypoint_head", keypoint_head)),
+        n_keypoints=int(saved.get("n_keypoints", n_keypoints)),
     )
 
 
@@ -88,6 +93,8 @@ def load_checkpoint(
     encoder_name: str = "resnet34",
     encoder_weights: str | None = None,
     dropout_p: float = 0.0,
+    keypoint_head: bool = False,
+    n_keypoints: int = 4,
     device: str | None = None,
 ) -> tuple[SegmentationModelWrapper, dict]:
     """Load a segmentation checkpoint. Returns ``(model.eval(), checkpoint_dict)``."""
@@ -111,6 +118,8 @@ def load_checkpoint(
         encoder_name=encoder_name,
         encoder_weights=encoder_weights,
         dropout_p=dropout_p,
+        keypoint_head=keypoint_head,
+        n_keypoints=n_keypoints,
     )
     model = build_model(model_cfg).to(device)
 
@@ -122,6 +131,8 @@ def load_checkpoint(
         "encoder_name": model_cfg.encoder_name,
         "encoder_weights": model_cfg.encoder_weights,
         "dropout_p": model_cfg.dropout_p,
+        "keypoint_head": model_cfg.keypoint_head,
+        "n_keypoints": model_cfg.n_keypoints,
     })
     _load_state_dict_flexible(model, state_dict)
     model.eval()
@@ -141,6 +152,8 @@ class GatePredictor:
         encoder_name: str = "resnet34",
         encoder_weights: str | None = None,
         dropout_p: float = 0.0,
+        keypoint_head: bool = False,
+        n_keypoints: int = 4,
         device: str | None = None,
     ):
         self.device = device or get_device()
@@ -152,6 +165,8 @@ class GatePredictor:
             encoder_name=encoder_name,
             encoder_weights=encoder_weights,
             dropout_p=dropout_p,
+            keypoint_head=keypoint_head,
+            n_keypoints=n_keypoints,
             device=self.device,
         )
         # Replay the data preprocessing the checkpoint was trained with.
@@ -166,6 +181,11 @@ class GatePredictor:
             )
         data_cfg = self.checkpoint_meta.get("data_config", {}) or {}
         self.imagenet_norm: bool = bool(data_cfg.get("imagenet_norm", False))
+        # Authoritative keypoint-head flag from the (now-loaded) model
+        # config — checkpoint metadata wins over the ``keypoint_head`` arg.
+        mcfg = self.checkpoint_meta.get("model_config", {}) or {}
+        self.has_keypoint_head: bool = bool(mcfg.get("keypoint_head", keypoint_head))
+        self.n_keypoints: int = int(mcfg.get("n_keypoints", n_keypoints))
 
     @torch.no_grad()
     def predict_image(self, img_path: str | os.PathLike) -> tuple[np.ndarray, np.ndarray]:
@@ -176,6 +196,46 @@ class GatePredictor:
         img_t, img_rgb = self._preprocess_bgr(img_bgr)
         pred = self._predict_tensor(img_t).squeeze().cpu().numpy()
         return img_rgb, pred
+
+    @torch.no_grad()
+    def predict_keypoints(
+        self,
+        img_path: str | os.PathLike,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None]:
+        """Run a single forward pass and decode both seg + keypoint outputs.
+
+        Returns ``(rgb_uint8, seg_prob, keypoints_xy_or_None,
+        peak_confidence_or_None)`` where:
+          * ``keypoints_xy`` is ``(K, 2)`` inner-corner pixel coordinates at
+            ``img_size`` resolution (CORNER_TYPES inner half: TL/TR/BR/BL).
+          * ``peak_confidence`` is ``(K,)`` — the per-channel heatmap max,
+            useful for thresholding "no clear peak" cases.
+
+        ``keypoints_xy`` and ``peak_confidence`` are ``None`` when the
+        underlying checkpoint has no keypoint head — caller is expected
+        to branch on that and fall back to QuAdGate or skip the frame.
+        """
+        from gate_detection.losses.keypoint import (
+            heatmap_peak_confidence,
+            soft_argmax_2d,
+        )
+
+        img_bgr = cv2.imread(str(img_path))
+        if img_bgr is None:
+            raise FileNotFoundError(f"Cannot read image: {img_path}")
+        img_t, img_rgb = self._preprocess_bgr(img_bgr)
+
+        if not self.has_keypoint_head:
+            seg = self._predict_tensor(img_t).squeeze().cpu().numpy()
+            return img_rgb, seg, None, None
+
+        seg_tuple, kp_pred = self.model.forward_multi(img_t)
+        seg = seg_tuple[-1].squeeze().cpu().numpy()
+        # kp_pred: (1, K, H, W). Soft-argmax decodes (1, K, 2) in (x, y);
+        # confidence is the channel-wise max of the raw heatmap.
+        kp_xy = soft_argmax_2d(kp_pred.float()).squeeze(0).cpu().numpy()    # (K, 2)
+        kp_conf = heatmap_peak_confidence(kp_pred.float()).squeeze(0).cpu().numpy()  # (K,)
+        return img_rgb, seg, kp_xy, kp_conf
 
     @torch.no_grad()
     def _predict_tensor(self, img_t: torch.Tensor) -> torch.Tensor:

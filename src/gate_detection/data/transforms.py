@@ -119,3 +119,112 @@ def train_augment(img: np.ndarray, mask: np.ndarray):
     img = motion_blur(img)
     img = gaussian_noise(img)
     return img, mask
+
+
+# ---------------------------------------------------------------------------
+# Keypoint-aware augmentation
+# ---------------------------------------------------------------------------
+# The keypoint-multi-task path (plan P1-1) needs the SAME spatial transforms
+# applied to the inner corner pixel coordinates so the rendered heatmap
+# targets line up with the augmented image. We deliberately track corners
+# vectorially (not by warping a pre-rendered heatmap), because warping a
+# Gaussian peak through bilinear interpolation smears it sub-pixel — fine
+# for visualisation, bad for sub-pixel keypoint regression.
+#
+# Inner-corner channel order is the second half of CORNER_TYPES at
+# data/labels.py:33-36 — [inner_TL, inner_TR, inner_BR, inner_BL].
+_INNER_CORNER_HFLIP_PERM = [1, 0, 3, 2]
+
+
+def random_flip_kp(
+    img: np.ndarray,
+    mask: np.ndarray,
+    corners: np.ndarray,
+    vis: np.ndarray,
+    p: float = 0.5,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Random horizontal flip applied to img + mask + corner coords.
+
+    Horizontal flip swaps left and right corners (TL↔TR, BL↔BR), so the
+    channel order must be permuted to keep "channel k = inner corner k"
+    consistent across batch.
+    """
+    if random.random() < p:
+        H, W = img.shape[:2]
+        img = cv2.flip(img, 1)
+        mask = cv2.flip(mask, 1)
+        corners = corners.copy()
+        corners[:, 0] = (W - 1) - corners[:, 0]
+        corners = corners[_INNER_CORNER_HFLIP_PERM]
+        vis = vis[_INNER_CORNER_HFLIP_PERM]
+    return img, mask, corners, vis
+
+
+def random_affine_kp(
+    img: np.ndarray,
+    mask: np.ndarray,
+    corners: np.ndarray,
+    vis: np.ndarray,
+    *,
+    angle_deg: float = 15.0,
+    translate_frac: float = 0.10,
+    scale_range: tuple[float, float] = (0.9, 1.1),
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Affine warp applied identically to img / mask / corner coords.
+
+    Corners that land outside the frame after the warp have their
+    visibility flag set to 0 — the loss masks invisible channels so an
+    empty target does not become a "no peak" training signal.
+    """
+    H, W = img.shape[:2]
+    angle = random.uniform(-angle_deg, angle_deg)
+    tx = random.uniform(-translate_frac, translate_frac) * W
+    ty = random.uniform(-translate_frac, translate_frac) * H
+    scale = random.uniform(*scale_range)
+
+    M = cv2.getRotationMatrix2D((W / 2, H / 2), angle, scale)
+    M[0, 2] += tx
+    M[1, 2] += ty
+    # BORDER_CONSTANT (black) instead of BORDER_REFLECT here, intentionally:
+    # under reflection a gate near the frame edge gets *reflected* into the
+    # visible area while its corner labels are marked invisible (the
+    # corner pixel is outside [0, W)). The model would learn to ignore
+    # gate-like features near edges, which is the opposite of what we
+    # want at deployment where edge gates are real. Black borders are
+    # obviously not gates and the model learns no spurious pattern.
+    img = cv2.warpAffine(img, M, (W, H), flags=cv2.INTER_LINEAR,
+                         borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
+    mask = cv2.warpAffine(mask, M, (W, H), flags=cv2.INTER_NEAREST,
+                          borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+
+    # Apply the same M to corners. cv2 affine matrices are 2×3 in the form
+    # [[a, b, tx], [c, d, ty]]; for points we use [x, y, 1] @ M^T.
+    corners_h = np.hstack([corners, np.ones((corners.shape[0], 1), dtype=corners.dtype)])
+    corners_t = corners_h @ M.T  # (K, 2)
+    in_frame = (
+        (corners_t[:, 0] >= 0) & (corners_t[:, 0] < W) &
+        (corners_t[:, 1] >= 0) & (corners_t[:, 1] < H)
+    )
+    # Multiplicative AND: a corner that was already invisible stays invisible.
+    vis = (vis.astype(np.int32) * in_frame.astype(np.int32)).astype(vis.dtype)
+    return img, mask, corners_t.astype(corners.dtype), vis
+
+
+def train_augment_kp(
+    img: np.ndarray,
+    mask: np.ndarray,
+    corners: np.ndarray,
+    vis: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Keypoint-aware training augmentation chain.
+
+    Spatial transforms (flip, affine) are applied to img + mask + corner
+    coords + vis flags simultaneously; appearance transforms (HSV, blur,
+    noise) only touch the image.
+    """
+    img, mask, corners, vis = random_flip_kp(img, mask, corners, vis)
+    img, mask, corners, vis = random_affine_kp(img, mask, corners, vis)
+    img = hsv_jitter(img)
+    img = motion_blur(img)
+    img = gaussian_noise(img)
+    return img, mask, corners, vis
