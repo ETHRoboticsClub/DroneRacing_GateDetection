@@ -214,11 +214,15 @@ def parse_pixel_corners(
             if not synth_outer:
                 skipped_no_outer += 1
                 continue
-            if len(inner_visible_pts) < 3:
+            # assign_corner_types sorts by quadrant via argmin/argmax over
+            # x±y and only produces a non-degenerate (4, 2) when ALL four
+            # corners are present — with three points one of them gets
+            # picked for two slots. Require 4 visible to keep priors clean.
+            if len(inner_visible_pts) < 4:
                 skipped_too_few_visible += 1
                 continue
-            # Synthesise outer corners from the visible inner corners only,
-            # matching the offline 17→29-col conversion in benchmark_pnp.
+            # Synthesise outer corners from the inner ones, matching the
+            # offline 17→29-col conversion in benchmark_pnp.py:79-81.
             centroid = inner_visible_pts.mean(axis=0)
             outer_visible_pts = centroid + synth_scale * (inner_visible_pts - centroid)
         else:
@@ -226,7 +230,9 @@ def parse_pixel_corners(
                 [[x, y] for (x, y), v in zip(g["outer"], g["outer_vis"]) if v > 0],
                 dtype=np.float32,
             )
-            if len(inner_visible_pts) < 3 or len(outer_visible_pts) < 3:
+            # Same 4-visibility requirement as above; assign_corner_types
+            # silently duplicates when fewer than 4 are passed.
+            if len(inner_visible_pts) < 4 or len(outer_visible_pts) < 4:
                 skipped_too_few_visible += 1
                 continue
 
