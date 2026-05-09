@@ -133,12 +133,13 @@ def benchmark_flight(
                           from any QuAdGate amplification or damage.
       - ``"ekf"``       : previous frame's detected corners carried forward
                           as the current prior (the simplest motion model:
-                          identity). Cold-start fallback uses the keypoint
-                          head when available, then the centred default.
-                          Approximates a deployed EKF that propagates
-                          corners between frames; with ``stride=30`` the
-                          prior is ~30 frames stale, which is a pessimistic
-                          stand-in for stride=1 real-time deployment.
+                          identity), with **hybrid fallback** — if QuAdGate
+                          rejects the EKF prior (no match), retry with the
+                          keypoint head's prior; if that also fails, fall
+                          through to the centred default. Approximates a
+                          deployed EKF + perception system: the EKF supplies
+                          a tight prior when fresh, and the perception stack
+                          recovers when the EKF state goes stale.
     Model and ekf modes require a checkpoint trained with
     ``model.keypoint_head=true``; a runtime check raises ``RuntimeError``
     otherwise — silent fall-through would mis-report 0 % detection on
@@ -231,19 +232,27 @@ def benchmark_flight(
                 # Skip QuAdGate; the model's corners ARE the detected output.
                 skip_quadgate = True
         elif prior_mode == "ekf":
-            # Carry-forward identity-motion EKF: previous detection is
-            # the strongest prior. Cold-start (no detection yet) falls
-            # back to the keypoint head if confidence allows, then to
-            # the centred default. Three-tier so a single bad frame
-            # doesn't drop the system into a worse-than-cold state.
-            if last_detected is not None:
-                prior = last_detected.copy()
-            elif kp_xy is not None and float(kp_conf.min()) >= keypoint_conf_threshold:
-                prior = _build_prior_from_inner(kp_xy)
-            else:
-                prior = none_prior if none_prior is not None else _default_prior(img_size)
+            # Carry-forward identity-motion EKF (handled below as a
+            # multi-tier retry — set prior=None here, the ekf branch
+            # below runs detect_corners up to twice).
+            prior = None  # actual selection happens in the EKF retry block
 
-        if skip_quadgate:
+        if prior_mode == "ekf":
+            # Tier 1: previous frame's detected corners (the EKF state).
+            detected = None
+            if last_detected is not None:
+                detected = detect_corners(pred, last_detected)
+            # Tier 2: keypoint-head prior — runs when EKF was unavailable
+            # OR when QuAdGate rejected the EKF prior. Confidence-gated
+            # the same way as prior_mode="model".
+            if detected is None and kp_xy is not None and float(kp_conf.min()) >= keypoint_conf_threshold:
+                detected = detect_corners(pred, _build_prior_from_inner(kp_xy))
+            # Tier 3: centred default. QuAdGate-from-cold-start; almost
+            # always fails per report 06's "none" mode (0 % within 5 px),
+            # but emits a deterministic last-resort attempt before giving up.
+            if detected is None:
+                detected = detect_corners(pred, _default_prior(img_size))
+        elif skip_quadgate:
             detected = prior  # already (8, 2) in CORNER_TYPES order
         else:
             detected = detect_corners(pred, prior) if prior is not None else None
