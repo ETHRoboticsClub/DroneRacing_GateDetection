@@ -58,7 +58,18 @@ def _track_type_key(flight_name: str) -> str:
             # fallback: piloted if 'p' appears in flight id segment
             before = name[:name.lower().find("track")]
             return "trackratm-p" if "p" in before.split("-") else "trackratm-a"
-    return "ellipse"  # safe default
+    # Fallback: no pattern matched. Per CLAUDE.md section 6, log the default
+    # explicitly — silent miscalibration is exactly the failure mode this
+    # rule is meant to catch (see docs/report/04_pnp_frame_diagnosis/).
+    print(
+        f"[WARN] _track_type_key('{flight_name}'): no track pattern matched "
+        f"(expected 'ellipse' | 'lemniscate' | 'trackratm-*'); "
+        f"defaulting to 'ellipse'. If the rig is mounted differently from the "
+        f"ellipse calibration, the camera-from-world pose will be wrong; pass "
+        f"--calib-key explicitly once that flag exists.",
+        flush=True,
+    )
+    return "ellipse"
 
 
 def load_calibration(
