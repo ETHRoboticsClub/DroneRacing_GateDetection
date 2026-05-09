@@ -30,7 +30,13 @@ model:
 loss:
   deep_supervision_weights: [1]
   bce_weight: 2.0
-  keypoint_weight: 1.0                  # β in L = L_seg + β·L_kp
+  # kp head's per-pixel MSE is averaged over all 384² pixels but signal
+  # lives in ~30 pixels per channel (Gaussian peak with σ=3), so the
+  # natural loss scale is ~1000× smaller than seg's per-pixel BCE+Dice.
+  # First-pass sanity at β=1 gave val_kp_loss ≈ predict-zero baseline
+  # (head not learning); β=100 brings the kp gradient into the same
+  # magnitude as the seg gradient.
+  keypoint_weight: 100.0                # β in L = L_seg + β·L_kp
   keypoint_fg_weight: 10.0              # weight = fg_weight·target + 1
 
 train:
