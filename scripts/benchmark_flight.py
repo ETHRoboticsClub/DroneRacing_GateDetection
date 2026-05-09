@@ -77,11 +77,12 @@ def main() -> None:
     p.add_argument("--n",        type=int, default=16, help="rows in visual grid")
     p.add_argument("--out",      type=str, default="flight_benchmark.png")
     p.add_argument("--prior-mode", type=str, default="gt",
-                   choices=["gt", "noisy", "none", "model", "model_direct"],
+                   choices=["gt", "noisy", "none", "model", "model_direct", "ekf"],
                    help=("QuAdGate prior source: gt (over-states detection rate), "
                          "noisy (GT + Gaussian σ px), none (centred default — blind), "
                          "model (predictor's keypoint head supplies the prior), "
-                         "model_direct (use keypoint-head corners as the detected output, no QuAdGate)"))
+                         "model_direct (use keypoint-head corners as the detected output, no QuAdGate), "
+                         "ekf (carry previous frame's detection as the prior; model-prior cold-start fallback)"))
     p.add_argument("--noisy-sigma-px", type=float, default=30.0,
                    help="Per-coordinate Gaussian σ for prior_mode=noisy (default 30 px)")
     p.add_argument("--seed", type=int, default=42,

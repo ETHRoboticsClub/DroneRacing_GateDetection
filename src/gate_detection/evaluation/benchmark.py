@@ -131,17 +131,23 @@ def benchmark_flight(
                           entirely and report the model's corners as the
                           detected corners. Isolates the head's accuracy
                           from any QuAdGate amplification or damage.
-    Model modes require a checkpoint trained with ``model.keypoint_head=true``;
-    a runtime check raises ``RuntimeError`` otherwise — silent fall-through
-    would mis-report 0 % detection on every frame.
-
-    EKF mode (carry the previous detection forward) is intentionally out of
-    scope here; it carries state across frames and gets its own implementation.
+      - ``"ekf"``       : previous frame's detected corners carried forward
+                          as the current prior (the simplest motion model:
+                          identity). Cold-start fallback uses the keypoint
+                          head when available, then the centred default.
+                          Approximates a deployed EKF that propagates
+                          corners between frames; with ``stride=30`` the
+                          prior is ~30 frames stale, which is a pessimistic
+                          stand-in for stride=1 real-time deployment.
+    Model and ekf modes require a checkpoint trained with
+    ``model.keypoint_head=true``; a runtime check raises ``RuntimeError``
+    otherwise — silent fall-through would mis-report 0 % detection on
+    every frame.
     """
-    valid_modes = {"gt", "noisy", "none", "model", "model_direct"}
+    valid_modes = {"gt", "noisy", "none", "model", "model_direct", "ekf"}
     if prior_mode not in valid_modes:
         raise ValueError(f"prior_mode must be one of {valid_modes}; got {prior_mode!r}")
-    if prior_mode in {"model", "model_direct"} and not getattr(predictor, "has_keypoint_head", False):
+    if prior_mode in {"model", "model_direct", "ekf"} and not getattr(predictor, "has_keypoint_head", False):
         raise RuntimeError(
             f"prior_mode={prior_mode!r} requires a checkpoint trained with "
             "model.keypoint_head=true; the loaded checkpoint has no keypoint head."
@@ -169,6 +175,12 @@ def benchmark_flight(
     corner_errors: list[float | None] = []
     distances: list[float] = []
     visuals: list[FlightSample] = []
+
+    # State carried between frames in ekf mode — the previous frame's
+    # detected (8, 2) corners become the next frame's prior. Stays
+    # None until the first successful detection; never reset back to
+    # None on a missed frame so a single failure doesn't lose state.
+    last_detected: np.ndarray | None = None
 
     t0 = time.perf_counter()
     for fname in sampled:
@@ -218,6 +230,18 @@ def benchmark_flight(
             if prior_mode == "model_direct":
                 # Skip QuAdGate; the model's corners ARE the detected output.
                 skip_quadgate = True
+        elif prior_mode == "ekf":
+            # Carry-forward identity-motion EKF: previous detection is
+            # the strongest prior. Cold-start (no detection yet) falls
+            # back to the keypoint head if confidence allows, then to
+            # the centred default. Three-tier so a single bad frame
+            # doesn't drop the system into a worse-than-cold state.
+            if last_detected is not None:
+                prior = last_detected.copy()
+            elif kp_xy is not None and float(kp_conf.min()) >= keypoint_conf_threshold:
+                prior = _build_prior_from_inner(kp_xy)
+            else:
+                prior = none_prior if none_prior is not None else _default_prior(img_size)
 
         if skip_quadgate:
             detected = prior  # already (8, 2) in CORNER_TYPES order
@@ -226,6 +250,12 @@ def benchmark_flight(
         detected_mask.append(detected is not None)
         cerr = inner_corner_error(detected, gt_gates)
         corner_errors.append(cerr)
+
+        # Update EKF state only on success — missing a frame should not
+        # reset the prior. (No-op for non-ekf modes; the variable is
+        # only read inside the ekf branch above.)
+        if detected is not None:
+            last_detected = np.asarray(detected, dtype=np.float64)
 
         dist = float("nan")
         if csv_df is not None and fname in csv_df.index:
