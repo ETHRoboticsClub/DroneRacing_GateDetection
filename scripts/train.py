@@ -37,6 +37,7 @@ def main() -> None:
         augment=            not args.no_aug,
         img_size=           cfg["data"]["img_size"],
         use_sam_masks=      use_sam_masks,
+        imagenet_norm=      cfg["data"].get("imagenet_norm", False),
         data_root=          data_root,
         model_name=         cfg["model"].get("name", "gatenet"),
         width_factor=       cfg["model"]["width_factor"],

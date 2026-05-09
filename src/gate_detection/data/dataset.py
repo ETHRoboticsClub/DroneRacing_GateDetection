@@ -11,7 +11,7 @@ import torch
 from torch.utils.data import Dataset
 
 from .labels import corners_to_mask
-from .transforms import train_augment
+from .transforms import apply_imagenet_norm, train_augment
 
 MASK_SUFFIX = "_mask.png"
 
@@ -51,10 +51,12 @@ class GateDataset(Dataset):
         img_size: int = 384,
         augment: bool = True,
         use_sam_masks: bool = False,
+        imagenet_norm: bool = False,
     ):
         self.img_size = img_size
         self.augment = augment
         self.use_sam_masks = use_sam_masks
+        self.imagenet_norm = imagenet_norm
         # second element is mask_path (SAM mode) or lbl_path (label mode)
         self.samples: list[tuple[str, str]] = []
 
@@ -101,6 +103,13 @@ class GateDataset(Dataset):
         if self.augment:
             img, mask = train_augment(img, mask)
 
-        img_t = torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
+        # Train/inference parity: if imagenet_norm is on, apply the SAME
+        # helper used by the predictor (single source of truth in
+        # transforms.apply_imagenet_norm). The flag is persisted in the
+        # checkpoint metadata so the predictor can replay it.
+        if self.imagenet_norm:
+            img_t = torch.from_numpy(apply_imagenet_norm(img)).permute(2, 0, 1).contiguous()
+        else:
+            img_t = torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
         mask_t = torch.from_numpy(mask).unsqueeze(0).float()
         return img_t, mask_t

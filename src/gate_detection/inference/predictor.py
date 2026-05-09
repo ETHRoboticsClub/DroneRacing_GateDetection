@@ -154,6 +154,18 @@ class GatePredictor:
             dropout_p=dropout_p,
             device=self.device,
         )
+        # Replay the data preprocessing the checkpoint was trained with.
+        # Old checkpoints (no data_config field) default to imagenet_norm=False
+        # — same behaviour as before this flag was introduced. We log the
+        # fallback explicitly per CLAUDE.md §6 (no silent defaults).
+        if "data_config" not in self.checkpoint_meta:
+            print(
+                f"[WARN] checkpoint at {checkpoint}: no data_config; "
+                "defaulting imagenet_norm=False (legacy behaviour)",
+                flush=True,
+            )
+        data_cfg = self.checkpoint_meta.get("data_config", {}) or {}
+        self.imagenet_norm: bool = bool(data_cfg.get("imagenet_norm", False))
 
     @torch.no_grad()
     def predict_image(self, img_path: str | os.PathLike) -> tuple[np.ndarray, np.ndarray]:
@@ -174,5 +186,11 @@ class GatePredictor:
         """BGR ndarray → (NCHW tensor on device, RGB ``img_size×img_size`` uint8)."""
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         img_res = cv2.resize(img_rgb, (self.img_size, self.img_size))
-        img_t = torch.from_numpy(img_res).permute(2, 0, 1).float() / 255.0
+        if self.imagenet_norm:
+            # Match the training-time path in GateDataset.__getitem__ via the
+            # single shared helper in data/transforms.py.
+            from gate_detection.data.transforms import apply_imagenet_norm
+            img_t = torch.from_numpy(apply_imagenet_norm(img_res)).permute(2, 0, 1).contiguous()
+        else:
+            img_t = torch.from_numpy(img_res).permute(2, 0, 1).float() / 255.0
         return img_t.unsqueeze(0).to(self.device), img_res

@@ -3,8 +3,10 @@
 # Keep in sync with the heavy-file rules in CLAUDE.md (Remote execution: qolam).
 
 # ── Datasets and on-disk caches (each side downloads independently)
-datasets/
-data/
+# Anchored with a leading slash so the rule matches ONLY the top-level
+# directories, not nested ones like src/gate_detection/data/.
+/datasets/
+/data/
 
 # ── Trained weights and exported engines
 checkpoints/

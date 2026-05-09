@@ -50,6 +50,7 @@ def build_dataloaders(
     batch_size: int = 16,
     augment: bool = True,
     use_sam_masks: bool = True,
+    imagenet_norm: bool = False,
     num_workers_train: int = 12,
     num_workers_val: int = 12,
     prefetch_factor: int = 4,
@@ -60,8 +61,8 @@ def build_dataloaders(
     train_dirs = [str(data_root / "train")]
     val_dirs   = [str(data_root / "val")]
 
-    train_ds = GateDataset(train_dirs, img_size=img_size, augment=augment,  use_sam_masks=use_sam_masks)
-    val_ds   = GateDataset(val_dirs,   img_size=img_size, augment=False, use_sam_masks=use_sam_masks)
+    train_ds = GateDataset(train_dirs, img_size=img_size, augment=augment,  use_sam_masks=use_sam_masks, imagenet_norm=imagenet_norm)
+    val_ds   = GateDataset(val_dirs,   img_size=img_size, augment=False, use_sam_masks=use_sam_masks, imagenet_norm=imagenet_norm)
 
     # persistent_workers avoids re-spawning the worker pool every epoch
     # (cheap dataset, expensive fork startup); prefetch_factor keeps the
@@ -221,6 +222,7 @@ def train(
     num_workers_val: int = 2,
     prefetch_factor: int = 4,
     use_sam_masks: bool = True,
+    imagenet_norm: bool = False,
     data_root: str | os.PathLike | None = None,
     checkpoint_dir: str | os.PathLike = CHECKPOINTS_ROOT,
     checkpoint_name: str = "best_gatenet.pth",
@@ -290,11 +292,13 @@ def train(
         batch_size=batch_size,
         augment=augment,
         use_sam_masks=use_sam_masks,
+        imagenet_norm=imagenet_norm,
         num_workers_train=num_workers_train,
         num_workers_val=num_workers_val,
         prefetch_factor=prefetch_factor,
     )
     print(f"Train: {len(train_ds)} samples  Val: {len(val_ds)} samples")
+    print(f"Data : use_sam_masks={use_sam_masks}, imagenet_norm={imagenet_norm}, augment={augment}")
 
     # GradScaler enabled ONLY for CUDA + fp16. bf16 has the same exponent
     # range as fp32, so gradients never underflow and scaling is unnecessary.
@@ -411,6 +415,12 @@ def train(
                         "encoder_weights": model_cfg.encoder_weights,
                         "dropout_p": model_cfg.dropout_p,
                     },
+                    # Data-preprocessing fields the predictor must replay
+                    # at inference for parity. Kept separate from
+                    # model_config because they are not architectural.
+                    "data_config": {
+                        "imagenet_norm": imagenet_norm,
+                    },
                     "optimizer": optimizer.state_dict(),
                     "val_loss": val_loss,
                     "train_loss": train_loss,
@@ -437,6 +447,9 @@ def train(
                 "encoder_name": model_cfg.encoder_name,
                 "encoder_weights": model_cfg.encoder_weights,
                 "dropout_p": model_cfg.dropout_p,
+            },
+            "data_config": {
+                "imagenet_norm": imagenet_norm,
             },
             "val_loss": best_val_loss,
             "val_iou": best_val_iou,
