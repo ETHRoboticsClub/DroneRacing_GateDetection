@@ -26,6 +26,10 @@ Training data: [tii-racing drone racing dataset](https://github.com/tii-racing/d
 
 ### Known Issues
 
+> **Caveat — read before quoting any number below.** The 82 % / 5.0 px / 30.7 px headlines reflect QuAdGate run with the **ground-truth corners as the prior** — a benchmarking convenience that over-states deployed detection. Under a realistic prior (Gaussian σ = 30 px jitter on GT, modelling EKF drift between frames), the within-5 px corner rate drops to **~0 %** and the detection rate drops 21 pp. See [`docs/report/06_realistic_priors/findings.md`](docs/report/06_realistic_priors/findings.md) for the full `gt` / `noisy` / `none` prior-mode ablation.
+>
+> The original 82 % number was measured on `flight-01p-fixed` with 29-col labels produced by `scripts/prepare_labels.py` — a script absent from the current checkout (tracked as plan P0-4) — and the flight itself is on Google Drive, not yet on qolam. On `flight-01p-ellipse` with the 17-col labels TII v3.0.0 ships and `parse_pixel_corners(..., synth_outer=True)`, the equivalent `gt`-prior numbers are **67.4 % detection** with **2.78 px mean corner error** at **93.7 %** within 5 px. Until the missing script and the `-fixed` flight are restored, the table below is historical and not directly reproducible from the current repo state. The 39 % real-footage detection rate further down is a separate domain-gap issue and is unaffected by the prior caveat.
+
 #### PnP — reprojection error too high
 
 Current results on `flight-01p-fixed` (360 frames, 82% gate detection rate):
