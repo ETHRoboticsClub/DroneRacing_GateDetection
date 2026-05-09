@@ -1,0 +1,55 @@
+# rsync exclusion list shared between laptop and qolam.
+# Used by `rsync -avz --exclude-from='.rsyncignore' ...` in either direction.
+# Keep in sync with the heavy-file rules in CLAUDE.md (Remote execution: qolam).
+
+# ── Datasets and on-disk caches (each side downloads independently)
+datasets/
+data/
+
+# ── Trained weights and exported engines
+checkpoints/
+*.pth
+*.pt
+*.engine
+*.onnx
+*.trt
+*.plan
+*.safetensors
+
+# ── Build / packaging artefacts
+build/
+dist/
+*.egg-info/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# ── LaTeX build output (already gitignored, also too noisy to rsync)
+docs/research/build/
+*.aux
+*.log
+*.out
+*.toc
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+
+# ── Virtual envs (each side has its own conda env)
+.venv/
+venv/
+node_modules/
+
+# ── Archives
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+
+# ── OS noise
+.DS_Store
+Thumbs.db
