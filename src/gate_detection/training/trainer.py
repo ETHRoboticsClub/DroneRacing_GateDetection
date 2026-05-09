@@ -14,8 +14,10 @@ Hyperparameter defaults mirror ``configs/default.yaml``; the CLI in
 from __future__ import annotations
 
 import os
+import random
 from pathlib import Path
 
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from torchmetrics.classification import BinaryJaccardIndex
@@ -223,6 +225,7 @@ def train(
     prefetch_factor: int = 4,
     use_sam_masks: bool = True,
     imagenet_norm: bool = False,
+    seed: int = 42,
     data_root: str | os.PathLike | None = None,
     checkpoint_dir: str | os.PathLike = CHECKPOINTS_ROOT,
     checkpoint_name: str = "best_gatenet.pth",
@@ -236,6 +239,18 @@ def train(
     """
     device = device or get_device()
     print(f"Device: {device}")
+    # Reproducibility: seed PyTorch (model init, dataloader shuffle), NumPy
+    # (kornia internals, label rasterisation), and Python's random module
+    # (augmentations in data/transforms.py). The 28/8 flight split is
+    # independently seeded inside data/discovery.py:31 so it does not depend
+    # on this call. cudnn deterministic is intentionally NOT set — too
+    # expensive (~30% slower) for the run-to-run consistency it would buy.
+    print(f"Seed: {seed}")
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
     if device == "cuda":
         # cudnn.benchmark caches the best conv algorithm per input shape —
@@ -421,6 +436,7 @@ def train(
                     "data_config": {
                         "imagenet_norm": imagenet_norm,
                     },
+                    "seed": seed,
                     "optimizer": optimizer.state_dict(),
                     "val_loss": val_loss,
                     "train_loss": train_loss,
@@ -451,6 +467,7 @@ def train(
             "data_config": {
                 "imagenet_norm": imagenet_norm,
             },
+            "seed": seed,
             "val_loss": best_val_loss,
             "val_iou": best_val_iou,
         },

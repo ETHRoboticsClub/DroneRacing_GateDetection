@@ -22,6 +22,8 @@ def main() -> None:
     p.add_argument("--lr",         type=float, default=None)
     p.add_argument("--no-aug",     action="store_true",
                    help="disable online per-batch augmentation")
+    p.add_argument("--seed",       type=int, default=None,
+                   help="reproducibility seed (overrides cfg['train']['seed']; default 42)")
     args = p.parse_args()
 
     cfg = load_config(args.config)
@@ -35,6 +37,7 @@ def main() -> None:
         batch_size=         args.batch_size if args.batch_size is not None else cfg["train"]["batch_size"],
         base_lr=            args.lr         if args.lr is not None         else cfg["train"]["lr"],
         augment=            not args.no_aug,
+        seed=               args.seed if args.seed is not None else cfg["train"].get("seed", 42),
         img_size=           cfg["data"]["img_size"],
         use_sam_masks=      use_sam_masks,
         imagenet_norm=      cfg["data"].get("imagenet_norm", False),

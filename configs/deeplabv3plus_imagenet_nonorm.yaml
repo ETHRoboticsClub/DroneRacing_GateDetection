@@ -1,0 +1,57 @@
+# Ablation cell B: DeepLabV3+ with ResNet-34 ImageNet-pretrained encoder
+# but WITHOUT ImageNet-style input normalisation. Together with the gatenet
+# baseline (default.yaml) and deeplabv3plus_imagenet.yaml (full stack), this
+# lets us attribute any IoU lift to either pretrained-encoder weights or the
+# matching input distribution.
+#
+# Use: python scripts/train.py --config configs/deeplabv3plus_imagenet_nonorm.yaml
+
+data:
+  img_size: 384
+  sam_subdir: sam_masked
+  use_sam_masks: true
+  imagenet_norm: false                  # ← intentionally OFF (the cell-B knob)
+
+model:
+  name: deeplabv3plus
+  width_factor: 4
+  encoder_weights: imagenet             # ← intentionally ON
+  dropout_p: 0.1
+
+loss:
+  deep_supervision_weights: [1]
+  bce_weight: 2.0
+
+train:
+  epochs: 100
+  batch_size: 8
+  lr: 3.0e-4
+  optimizer: adamw
+  sgd_momentum: 0.9
+  weight_decay: 1.0e-4
+  seed: 42
+  num_workers_train: 16
+  num_workers_val: 16
+  scheduler:
+    type: polynomial_hf
+    warmup_ratio: 0.1
+    power: 0.9
+    lr_end: 1.0e-6
+  performance:
+    compile: true
+    compile_mode: max-autotune
+    amp: true
+    amp_dtype: bf16
+    channels_last: true
+    cudnn_benchmark: false
+    matmul_precision: high
+    prefetch_factor: 4
+  checkpoint_name: best_deeplabv3plus_imagenet_nonorm.pth
+
+eval:
+  threshold: 0.5
+
+postprocess:
+  max_dist: 100.0
+  ransac_threshold: 5.0
+  max_translation: 150.0

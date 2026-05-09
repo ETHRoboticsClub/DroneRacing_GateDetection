@@ -29,6 +29,7 @@ train:
   optimizer: adamw
   sgd_momentum: 0.9
   weight_decay: 1.0e-4
+  seed: 42                     # same seed as default.yaml — fair ablation
   num_workers_train: 16
   num_workers_val: 16
   scheduler:
