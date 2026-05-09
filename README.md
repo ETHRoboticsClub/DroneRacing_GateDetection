@@ -24,11 +24,22 @@ Training data: [tii-racing drone racing dataset](https://github.com/tii-racing/d
 - **Inference & visualisation**: `inference.py` with per-step QuAdGate debug mode
 - **Data preparation**: label synthesis (29-col with outer corners), interactive QA viewer, background download, offline augmentation (5× multiplier)
 
-### Known Issues
+### Deployment-relevant headline (current)
 
-> **Caveat — read before quoting any number below.** The 82 % / 5.0 px / 30.7 px headlines reflect QuAdGate run with the **ground-truth corners as the prior** — a benchmarking convenience that over-states deployed detection. Under a realistic prior (Gaussian σ = 30 px jitter on GT, modelling EKF drift between frames), the within-5 px corner rate drops to **~0 %** and the detection rate drops 21 pp. See [`docs/report/06_realistic_priors/findings.md`](docs/report/06_realistic_priors/findings.md) for the full `gt` / `noisy` / `none` prior-mode ablation.
+On `flight-01p-ellipse` (TII v3.0.0 piloted, 423 frames, no GT prior, no EKF state) the new multi-task DeepLabV3+ checkpoint with the keypoint head (plan P1-1, see [`docs/report/07_keypoint_head/findings.md`](docs/report/07_keypoint_head/findings.md)) reaches:
+
+| Mode | Det rate | Mean cerr | Median cerr | ≤ 5 px | ≤ 10 px | Throughput |
+|---|---|---|---|---|---|---|
+| `model_direct` (head only, **single forward pass**) | **85.1 %** | 12.6 px | **1.01 px** | 63.7 % | 68.3 % | **102 fps wall-clock** |
+| `model` (head → QuAdGate refinement) | 59.1 % | 7.2 px | 1.15 px | **72.7 %** | 75.9 % | 54 fps wall-clock |
+
+The keypoint head is in `configs/deeplabv3plus_keypoint.yaml`; the checkpoint round-trips its own metadata so the predictor builds the multi-task model automatically.
+
+### Known issues — historical numbers
+
+> **Caveat — read before quoting any historical number below.** The 82 % / 5.0 px / 30.7 px / "0 % under realistic prior" headlines all measured QuAdGate-only with various artificial priors (GT, GT + jitter, centred default). They are not deployment numbers. See [`docs/report/06_realistic_priors/findings.md`](docs/report/06_realistic_priors/findings.md) for the full `gt` / `noisy` / `none` prior-mode ablation that exposed the prior-sensitivity, and report 07 (above) for the multi-task keypoint head that supersedes the "0 % within 5 px under realistic prior" verdict with a deployable 64–73 %.
 >
-> The original 82 % number was measured on `flight-01p-fixed` with 29-col labels produced by `scripts/prepare_labels.py` — a script absent from the current checkout (tracked as plan P0-4) — and the flight itself is on Google Drive, not yet on qolam. On `flight-01p-ellipse` with the 17-col labels TII v3.0.0 ships and `parse_pixel_corners(..., synth_outer=True)`, the equivalent `gt`-prior numbers are **67.4 % detection** with **2.78 px mean corner error** at **93.7 %** within 5 px. Until the missing script and the `-fixed` flight are restored, the table below is historical and not directly reproducible from the current repo state. The 39 % real-footage detection rate further down is a separate domain-gap issue and is unaffected by the prior caveat.
+> The original 82 % was measured on `flight-01p-fixed` with 29-col labels produced by `scripts/prepare_labels.py` — a script absent from the current checkout (tracked as plan P0-4) — and the flight itself is on Google Drive, not yet on qolam. On `flight-01p-ellipse` with the 17-col labels TII ships and `parse_pixel_corners(..., synth_outer=True)`, the equivalent `gt`-prior numbers are **67.4 % detection** with **2.78 px mean corner error** at **93.7 %** within 5 px. The 39 % real-footage detection rate further down is a separate domain-gap issue and is unaffected by the prior caveat — that one stands as a deliverable until we get the team-recorded flights on qolam (P1-2).
 
 #### PnP — reprojection error too high
 
