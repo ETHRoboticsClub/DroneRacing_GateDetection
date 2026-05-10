@@ -181,6 +181,10 @@ class GatePredictor:
             )
         data_cfg = self.checkpoint_meta.get("data_config", {}) or {}
         self.imagenet_norm: bool = bool(data_cfg.get("imagenet_norm", False))
+        # Multi-gate target flag — checkpoints trained with multi-modal
+        # heatmaps need windowed soft-argmax at decode (global soft-argmax
+        # averages across multiple peaks per channel; see report 10).
+        self.multi_gate_target: bool = bool(data_cfg.get("multi_gate_target", False))
         # Authoritative keypoint-head flag from the (now-loaded) model
         # config — checkpoint metadata wins over the ``keypoint_head`` arg.
         mcfg = self.checkpoint_meta.get("model_config", {}) or {}
@@ -216,6 +220,7 @@ class GatePredictor:
         to branch on that and fall back to QuAdGate or skip the frame.
         """
         from gate_detection.losses.keypoint import (
+            coherent_quad_decode,
             heatmap_peak_confidence,
             soft_argmax_2d,
         )
@@ -231,10 +236,31 @@ class GatePredictor:
 
         seg_tuple, kp_pred = self.model.forward_multi(img_t)
         seg = seg_tuple[-1].squeeze().cpu().numpy()
-        # kp_pred: (1, K, H, W). Soft-argmax decodes (1, K, 2) in (x, y);
-        # confidence is the channel-wise max of the raw heatmap.
-        kp_xy = soft_argmax_2d(kp_pred.float()).squeeze(0).cpu().numpy()    # (K, 2)
-        kp_conf = heatmap_peak_confidence(kp_pred.float()).squeeze(0).cpu().numpy()  # (K,)
+        kp_pred_np = kp_pred.detach().float().cpu().numpy()[0]   # (K, H, W)
+        # Decode strategy depends on training target:
+        # * Single-modal (report 07): one peak per channel → global
+        #   soft-argmax is exact, no spatial-coherence question.
+        # * Multi-modal (report 10): peaks at every visible gate's
+        #   corner → per-channel argmax can pick from DIFFERENT gates
+        #   (frankenstein quad). Coherent_quad_decode enumerates
+        #   top-3 peaks per channel and picks the most-rectangular
+        #   combination so all 4 channels align on one gate.
+        # If coherent_quad_decode fails (no valid spatial ordering), we
+        # fall back to soft-argmax — better a noisy answer than no answer
+        # for the prior. CLAUDE.md §6: announce the fallback once.
+        if self.multi_gate_target:
+            kp_xy = coherent_quad_decode(kp_pred_np)
+            if kp_xy is None:
+                print(
+                    "[WARN] predict_keypoints: coherent_quad_decode found "
+                    "no spatially-ordered peak combo on this frame; "
+                    "falling back to global soft-argmax (Frankenstein risk).",
+                    flush=True,
+                )
+                kp_xy = soft_argmax_2d(kp_pred.float()).squeeze(0).cpu().numpy()
+        else:
+            kp_xy = soft_argmax_2d(kp_pred.float()).squeeze(0).cpu().numpy()
+        kp_conf = heatmap_peak_confidence(kp_pred.float()).squeeze(0).cpu().numpy()
         return img_rgb, seg, kp_xy, kp_conf
 
     @torch.no_grad()

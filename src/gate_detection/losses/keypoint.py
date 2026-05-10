@@ -224,6 +224,152 @@ def soft_argmax_2d(
     return torch.stack([cx, cy], dim=-1)  # (B, K, 2)
 
 
+def windowed_soft_argmax_2d(
+    heatmap: torch.Tensor,
+    *,
+    window_size: int = 15,
+    beta: float = 100.0,
+) -> torch.Tensor:
+    """Per-channel **windowed** soft-argmax around the integer-argmax pixel.
+
+    Designed for multi-modal targets (multiple peaks per channel — one per
+    visible gate). Global soft-argmax averages across all peaks; with two
+    near-equal peaks at distance ``d`` it returns the midpoint, not a
+    single corner. The windowed form picks the strongest peak by integer
+    argmax, then refines sub-pixel within a small window so distant peaks
+    cannot pull the estimate.
+
+    Parameters
+    ----------
+    heatmap : Tensor of shape (B, K, H, W).
+    window_size : odd integer pixel side. 15 px around a σ=3 peak captures
+        the entire 5σ envelope while staying well clear of any second-gate
+        peak that is even one gate-spacing away.
+    beta : softmax temperature inside the window. Same role as in
+        :func:`soft_argmax_2d`; β=100 gives near-integer behaviour with
+        sub-pixel correction from the immediate ±1 neighbourhood.
+
+    Returns
+    -------
+    Tensor of shape (B, K, 2) in (x, y) order, image-pixel units.
+    """
+    B, K, H, W = heatmap.shape
+    flat = heatmap.reshape(B, K, -1)
+    peak_idx = flat.argmax(dim=-1)            # (B, K)
+    peak_y = (peak_idx // W).long()           # (B, K)
+    peak_x = (peak_idx % W).long()
+    half = window_size // 2
+
+    out = torch.zeros(B, K, 2, device=heatmap.device, dtype=heatmap.dtype)
+    # B and K are both small (B=1 for single-image inference, K=4 for
+    # inner corners), so a Python loop here is fine; vectorisation would
+    # only help for batched validation, which uses the global soft_argmax_2d.
+    for b in range(B):
+        for k in range(K):
+            cy = int(peak_y[b, k].item())
+            cx = int(peak_x[b, k].item())
+            y0 = max(0, cy - half)
+            y1 = min(H, cy + half + 1)
+            x0 = max(0, cx - half)
+            x1 = min(W, cx + half + 1)
+            window = heatmap[b, k, y0:y1, x0:x1]
+            wflat = window.reshape(-1)
+            sm = (wflat * beta).softmax(dim=0)
+            ys = torch.arange(y0, y1, device=heatmap.device, dtype=heatmap.dtype)
+            xs = torch.arange(x0, x1, device=heatmap.device, dtype=heatmap.dtype)
+            yy, xx = torch.meshgrid(ys, xs, indexing="ij")
+            out[b, k, 0] = (sm * xx.reshape(-1)).sum()
+            out[b, k, 1] = (sm * yy.reshape(-1)).sum()
+    return out
+
+
+def _find_top_peaks_2d(channel: np.ndarray, n: int = 3, nms_radius: int = 30) -> list[tuple[float, float]]:
+    """Top-``n`` local maxima of a single (H, W) heatmap channel with NMS.
+
+    NMS = no two returned peaks within ``nms_radius`` px. Returns
+    ``[(x, y), ...]`` in descending peak-value order; may be shorter
+    than ``n`` if the channel doesn't have that many distinct local
+    maxima above background.
+    """
+    H, W = channel.shape
+    flat = channel.reshape(-1)
+    # Look at the top ~200 candidates — comfortably more than n × any
+    # reasonable cluster size given σ=3 peaks.
+    sorted_idx = np.argsort(flat)[::-1][:200]
+    peaks: list[tuple[float, float]] = []
+    r2 = nms_radius * nms_radius
+    for idx in sorted_idx:
+        y, x = int(idx // W), int(idx % W)
+        ok = True
+        for px, py in peaks:
+            if (x - px) * (x - px) + (y - py) * (y - py) < r2:
+                ok = False
+                break
+        if ok:
+            peaks.append((float(x), float(y)))
+            if len(peaks) >= n:
+                break
+    return peaks
+
+
+def coherent_quad_decode(heatmap: np.ndarray, top_n: int = 3) -> np.ndarray | None:
+    """Pick a (K=4, 2) corner set whose 4 peaks all belong to the **same** gate.
+
+    Designed for multi-modal heatmaps from multi-gate-trained heads
+    where per-channel argmax independently picks the strongest peak —
+    which can come from different gates per channel and produces a
+    Frankenstein quad that matches no single GT gate (see report 10).
+
+    Strategy: enumerate up to ``top_n`` local maxima per channel
+    (with NMS), then over the ``top_n^4`` combinations check the
+    spatial-order constraints (TR right of TL, BL below TL, BR right
+    of BL and below TR) and pick the most rectangular combination by
+    scoring ``|top_width - bot_width| + |left_height - right_height|``.
+
+    Parameters
+    ----------
+    heatmap : (K, H, W) float32 array. K must be 4 with channel order
+        TL, TR, BR, BL (matches CORNER_TYPES inner half).
+    top_n : peaks per channel to enumerate. With G=2-3 typical visible
+        gates, 3 covers the strongest peak from each gate plus a noise
+        buffer. The 3^4 = 81 combinations evaluate in microseconds.
+
+    Returns
+    -------
+    (4, 2) float32 array of (x, y) coords, or ``None`` if no
+    spatially-ordered combination exists (e.g., heatmap has no clear
+    peaks). Caller (predictor) should fall back appropriately.
+    """
+    if heatmap.shape[0] != 4:
+        raise ValueError(
+            f"coherent_quad_decode expects K=4 channels (TL, TR, BR, BL); "
+            f"got K={heatmap.shape[0]}"
+        )
+    peaks = [_find_top_peaks_2d(heatmap[k], n=top_n) for k in range(4)]
+    if any(len(p) == 0 for p in peaks):
+        return None
+    best_score = float("inf")
+    best_quad: np.ndarray | None = None
+    from itertools import product
+    for combo in product(*peaks):
+        TL, TR, BR, BL = combo  # each = (x, y)
+        # Spatial-order constraints for a non-self-intersecting quad
+        # with TL/TR/BR/BL labels. Strict inequalities to reject
+        # degenerate (overlapping) corner picks.
+        if not (TR[0] > TL[0] and BL[1] > TL[1]
+                and BR[0] > BL[0] and BR[1] > TR[1]):
+            continue
+        top_w   = TR[0] - TL[0]
+        bot_w   = BR[0] - BL[0]
+        left_h  = BL[1] - TL[1]
+        right_h = BR[1] - TR[1]
+        score = abs(top_w - bot_w) + abs(left_h - right_h)
+        if score < best_score:
+            best_score = score
+            best_quad = np.array(combo, dtype=np.float32)
+    return best_quad
+
+
 def heatmap_peak_confidence(heatmap: torch.Tensor) -> torch.Tensor:
     """Per-channel max of the heatmap → ``(B, K)`` peak values.
 
