@@ -228,3 +228,102 @@ def train_augment_kp(
     img = motion_blur(img)
     img = gaussian_noise(img)
     return img, mask, corners, vis
+
+
+# ---------------------------------------------------------------------------
+# Multi-gate variant
+# ---------------------------------------------------------------------------
+# The single-gate train_augment_kp expects (corners (K, 2), vis (K,)). The
+# multi-gate path threads (corners (G, K, 2), vis (G, K)) through the same
+# spatial transforms. The L-R flip channel-permutation is identical per
+# gate (CORNER_TYPES inner half [TL, TR, BR, BL] → [TR, TL, BL, BR]
+# under hflip), and the affine matrix is shared across all gates because
+# they live in the same image.
+
+def random_flip_kp_multi(
+    img: np.ndarray,
+    mask: np.ndarray,
+    corners: np.ndarray,
+    vis: np.ndarray,
+    p: float = 0.5,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Horizontal flip on img + mask + (G, K, 2) corners + (G, K) vis."""
+    if random.random() < p:
+        H, W = img.shape[:2]
+        img = cv2.flip(img, 1)
+        mask = cv2.flip(mask, 1)
+        corners = corners.copy()
+        corners[..., 0] = (W - 1) - corners[..., 0]
+        # Per-gate channel permutation under hflip — same [1, 0, 3, 2]
+        # as the single-gate path; broadcasts across the gate axis.
+        corners = corners[:, _INNER_CORNER_HFLIP_PERM, :]
+        vis = vis[:, _INNER_CORNER_HFLIP_PERM]
+    return img, mask, corners, vis
+
+
+def random_affine_kp_multi(
+    img: np.ndarray,
+    mask: np.ndarray,
+    corners: np.ndarray,
+    vis: np.ndarray,
+    *,
+    angle_deg: float = 15.0,
+    translate_frac: float = 0.10,
+    scale_range: tuple[float, float] = (0.9, 1.1),
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Affine warp on img/mask + (G, K, 2) corners. Out-of-frame → vis=0.
+
+    Same affine matrix applied to every gate's corners — they share the
+    image, so a single warp is correct. Per-corner in-frame visibility
+    is recomputed; gates that lose all visible corners simply contribute
+    zero peaks to the heatmap (the loss masks zero-vis channels when no
+    gate has them visible).
+    """
+    H, W = img.shape[:2]
+    angle = random.uniform(-angle_deg, angle_deg)
+    tx = random.uniform(-translate_frac, translate_frac) * W
+    ty = random.uniform(-translate_frac, translate_frac) * H
+    scale = random.uniform(*scale_range)
+
+    M = cv2.getRotationMatrix2D((W / 2, H / 2), angle, scale)
+    M[0, 2] += tx
+    M[1, 2] += ty
+    img = cv2.warpAffine(img, M, (W, H), flags=cv2.INTER_LINEAR,
+                         borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
+    mask = cv2.warpAffine(mask, M, (W, H), flags=cv2.INTER_NEAREST,
+                          borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+
+    # Apply M to every (g, k) corner. Reshape to (G*K, 2), homogenise,
+    # multiply, reshape back — single matmul for the whole batch.
+    G, K = corners.shape[0], corners.shape[1]
+    flat = corners.reshape(-1, 2)
+    flat_h = np.hstack([flat, np.ones((flat.shape[0], 1), dtype=flat.dtype)])
+    flat_t = (flat_h @ M.T).astype(corners.dtype)
+    corners_t = flat_t.reshape(G, K, 2)
+
+    in_frame = (
+        (corners_t[..., 0] >= 0) & (corners_t[..., 0] < W) &
+        (corners_t[..., 1] >= 0) & (corners_t[..., 1] < H)
+    )
+    vis = (vis.astype(np.int32) * in_frame.astype(np.int32)).astype(vis.dtype)
+    return img, mask, corners_t, vis
+
+
+def train_augment_kp_multi(
+    img: np.ndarray,
+    mask: np.ndarray,
+    corners: np.ndarray,
+    vis: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Multi-gate keypoint-aware training augmentation chain.
+
+    Mirrors :func:`train_augment_kp` for shape ``(G, K, 2)`` corners +
+    ``(G, K)`` vis. Spatial transforms shared across all gates; appearance
+    transforms touch only the image.
+    """
+    img, mask, corners, vis = random_flip_kp_multi(img, mask, corners, vis)
+    img, mask, corners, vis = random_affine_kp_multi(img, mask, corners, vis)
+    img = hsv_jitter(img)
+    img = motion_blur(img)
+    img = gaussian_noise(img)
+    return img, mask, corners, vis

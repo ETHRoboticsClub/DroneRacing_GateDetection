@@ -57,6 +57,7 @@ def build_dataloaders(
     keypoint_heatmap: bool = False,
     heatmap_sigma: float = 3.0,
     n_keypoints: int = 4,
+    multi_gate_target: bool = False,
     num_workers_train: int = 12,
     num_workers_val: int = 12,
     prefetch_factor: int = 4,
@@ -71,13 +72,13 @@ def build_dataloaders(
         train_dirs, img_size=img_size, augment=augment,
         use_sam_masks=use_sam_masks, imagenet_norm=imagenet_norm,
         keypoint_heatmap=keypoint_heatmap, heatmap_sigma=heatmap_sigma,
-        n_keypoints=n_keypoints,
+        n_keypoints=n_keypoints, multi_gate_target=multi_gate_target,
     )
     val_ds = GateDataset(
         val_dirs, img_size=img_size, augment=False,
         use_sam_masks=use_sam_masks, imagenet_norm=imagenet_norm,
         keypoint_heatmap=keypoint_heatmap, heatmap_sigma=heatmap_sigma,
-        n_keypoints=n_keypoints,
+        n_keypoints=n_keypoints, multi_gate_target=multi_gate_target,
     )
 
     # persistent_workers avoids re-spawning the worker pool every epoch
@@ -350,6 +351,7 @@ def train(
     keypoint_loss_weight: float = 0.0,
     keypoint_fg_weight: float = 10.0,
     heatmap_sigma: float = 3.0,
+    multi_gate_target: bool = False,
     seed: int = 42,
     data_root: str | os.PathLike | None = None,
     checkpoint_dir: str | os.PathLike = CHECKPOINTS_ROOT,
@@ -457,6 +459,7 @@ def train(
         keypoint_heatmap=keypoint_head,
         heatmap_sigma=heatmap_sigma,
         n_keypoints=n_keypoints,
+        multi_gate_target=multi_gate_target,
         num_workers_train=num_workers_train,
         num_workers_val=num_workers_val,
         prefetch_factor=prefetch_factor,
@@ -467,7 +470,7 @@ def train(
         print(
             f"Multi-task: keypoint_head=True n_keypoints={n_keypoints} "
             f"loss_weight={keypoint_loss_weight} fg_weight={keypoint_fg_weight} "
-            f"sigma_px={heatmap_sigma}"
+            f"sigma_px={heatmap_sigma} multi_gate_target={multi_gate_target}"
         )
 
     # GradScaler enabled ONLY for CUDA + fp16. bf16 has the same exponent
@@ -602,6 +605,7 @@ def train(
                     "data_config": {
                         "imagenet_norm": imagenet_norm,
                         "heatmap_sigma": heatmap_sigma,
+                        "multi_gate_target": multi_gate_target,
                     },
                     "seed": seed,
                     "optimizer": optimizer.state_dict(),
@@ -636,6 +640,7 @@ def train(
             "data_config": {
                 "imagenet_norm": imagenet_norm,
                 "heatmap_sigma": heatmap_sigma,
+                "multi_gate_target": multi_gate_target,
             },
             "seed": seed,
             "val_loss": best_val_loss,

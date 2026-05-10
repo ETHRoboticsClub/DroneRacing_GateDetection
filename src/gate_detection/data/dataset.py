@@ -11,8 +11,13 @@ import torch
 from torch.utils.data import Dataset
 
 from .labels import corners_to_mask, parse_gates
-from .transforms import apply_imagenet_norm, train_augment, train_augment_kp
-from gate_detection.losses.keypoint import render_heatmap
+from .transforms import (
+    apply_imagenet_norm,
+    train_augment,
+    train_augment_kp,
+    train_augment_kp_multi,
+)
+from gate_detection.losses.keypoint import render_heatmap, render_heatmap_multi
 
 MASK_SUFFIX = "_mask.png"
 
@@ -74,6 +79,50 @@ def _first_gate_inner(
     return corners, vis
 
 
+def _all_gates_inner(
+    lbl_path: str,
+    img_size: int,
+    n_keypoints: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return ``(corners (G, K, 2), vis (G, K))`` for ALL gates in ``lbl_path``.
+
+    Multi-gate sibling of :func:`_first_gate_inner`. Used by the
+    ``multi_gate_target`` dataset path: every visible gate's inner
+    corners contribute a Gaussian peak to the per-channel heatmap (max
+    across gates), so the keypoint head sees multi-modal targets and
+    is not penalised for predicting any specific gate's corners — see
+    ``docs/report/09_largest_gate_null_result/findings.md`` for the
+    motivation and the MonoRace cross-reference.
+
+    Empty-label / no-gate frames return shape ``(0, K, 2)`` /
+    ``(0, K)``; ``render_heatmap_multi`` handles ``G=0`` by returning
+    an all-zero heatmap with vis-per-channel = 0, which the loss masks.
+    """
+    if not lbl_path or not os.path.exists(lbl_path):
+        return (
+            np.zeros((0, n_keypoints, 2), dtype=np.float32),
+            np.zeros((0, n_keypoints), dtype=np.int32),
+        )
+    gates = parse_gates(lbl_path)
+    if not gates:
+        return (
+            np.zeros((0, n_keypoints, 2), dtype=np.float32),
+            np.zeros((0, n_keypoints), dtype=np.int32),
+        )
+    G = len(gates)
+    corners = np.zeros((G, n_keypoints, 2), dtype=np.float32)
+    vis = np.zeros((G, n_keypoints), dtype=np.int32)
+    for i, g in enumerate(gates):
+        if g["inner"].shape[0] != n_keypoints:
+            raise ValueError(
+                f"label {lbl_path} gate[{i}] produced {g['inner'].shape[0]} "
+                f"inner corners; keypoint head expects {n_keypoints}"
+            )
+        corners[i] = (g["inner"] * img_size).astype(np.float32)
+        vis[i] = np.asarray(g["inner_vis"], dtype=np.int32)
+    return corners, vis
+
+
 class GateDataset(Dataset):
     """Loads (image, mask) pairs from one or more flat directories.
 
@@ -104,6 +153,13 @@ class GateDataset(Dataset):
             soft-argmax to stay accurate.
         n_keypoints: number of corner channels (=4 for inner-only, the
             current convention; outer corners are synthesised at inference).
+        multi_gate_target: if True, render Gaussian peaks for ALL gates'
+            inner corners per channel (max across gates). Sidesteps the
+            "which gate" ambiguity in single-gate supervision that
+            plateaued report 07's val_corner_dist at 22 px (see
+            ``docs/report/09_largest_gate_null_result``). Inference is
+            unchanged — soft-argmax still returns one (x, y) per channel
+            (the most-prominent gate's corner). Requires ``keypoint_heatmap=True``.
     """
 
     def __init__(
@@ -116,6 +172,7 @@ class GateDataset(Dataset):
         keypoint_heatmap: bool = False,
         heatmap_sigma: float = 3.0,
         n_keypoints: int = 4,
+        multi_gate_target: bool = False,
     ):
         self.img_size = img_size
         self.augment = augment
@@ -124,6 +181,15 @@ class GateDataset(Dataset):
         self.keypoint_heatmap = keypoint_heatmap
         self.heatmap_sigma = heatmap_sigma
         self.n_keypoints = n_keypoints
+        self.multi_gate_target = multi_gate_target
+        if multi_gate_target and not keypoint_heatmap:
+            # CLAUDE.md §6: surface the inconsistency loudly. The flag
+            # has no meaning without keypoint_heatmap=True.
+            raise ValueError(
+                "multi_gate_target=True requires keypoint_heatmap=True; "
+                "the keypoint head must be active for the multi-gate "
+                "target rendering to do anything."
+            )
         # second element is mask_path (SAM mode) or lbl_path (label mode)
         self.samples: list[tuple[str, str]] = []
 
@@ -176,20 +242,37 @@ class GateDataset(Dataset):
                 if secondary_path.endswith(".txt")
                 else _label_path_for(img_path)
             )
-            corners_px, vis = _first_gate_inner(
-                lbl_path, self.img_size, self.n_keypoints,
-            )
-            if self.augment:
-                img, mask, corners_px, vis = train_augment_kp(
-                    img, mask, corners_px, vis,
+            if self.multi_gate_target:
+                # (G, K, 2) corners + (G, K) vis across all gates in frame.
+                corners_px, vis = _all_gates_inner(
+                    lbl_path, self.img_size, self.n_keypoints,
                 )
-            kp_target = render_heatmap(
-                corners_px, vis,
-                size=self.img_size,
-                sigma=self.heatmap_sigma,
-            )  # (K, H, W) float32
-            kp_target_t = torch.from_numpy(kp_target)            # (K, H, W)
-            kp_vis_t    = torch.from_numpy(vis.astype(np.int32))  # (K,)
+                if self.augment:
+                    img, mask, corners_px, vis = train_augment_kp_multi(
+                        img, mask, corners_px, vis,
+                    )
+                kp_target, vis_per_channel = render_heatmap_multi(
+                    corners_px, vis,
+                    size=self.img_size,
+                    sigma=self.heatmap_sigma,
+                )  # (K, H, W) float32, (K,) int32
+                kp_target_t = torch.from_numpy(kp_target)
+                kp_vis_t    = torch.from_numpy(vis_per_channel)
+            else:
+                corners_px, vis = _first_gate_inner(
+                    lbl_path, self.img_size, self.n_keypoints,
+                )
+                if self.augment:
+                    img, mask, corners_px, vis = train_augment_kp(
+                        img, mask, corners_px, vis,
+                    )
+                kp_target = render_heatmap(
+                    corners_px, vis,
+                    size=self.img_size,
+                    sigma=self.heatmap_sigma,
+                )  # (K, H, W) float32
+                kp_target_t = torch.from_numpy(kp_target)            # (K, H, W)
+                kp_vis_t    = torch.from_numpy(vis.astype(np.int32))  # (K,)
         else:
             if self.augment:
                 img, mask = train_augment(img, mask)

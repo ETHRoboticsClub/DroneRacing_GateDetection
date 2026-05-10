@@ -1,0 +1,69 @@
+# Plan P1-1 Stage 2: multi-gate Gaussian targets for the keypoint head.
+#
+# Inherits the report-07 keypoint config (deeplabv3plus_keypoint.yaml) and
+# flips one knob: data.multi_gate_target=true. Per-channel heatmap
+# targets are now max-of-Gaussians across all visible gates' inner
+# corners, sidestepping the "which gate" ambiguity that plateaued
+# report 07's val_corner_dist at 22 px (see report 09's null result on
+# largest-gate supervision and the MonoRace cross-reference). Inference
+# is unchanged — soft-argmax still returns one (x, y) per channel.
+#
+# Use: python scripts/train.py --config configs/deeplabv3plus_keypoint_multi.yaml
+
+data:
+  img_size: 384
+  sam_subdir: sam_masked
+  use_sam_masks: true
+  imagenet_norm: false
+  heatmap_sigma: 3.0
+  multi_gate_target: true               # ← P1-1 Stage 2 knob
+
+model:
+  name: deeplabv3plus
+  width_factor: 4
+  encoder_weights: imagenet
+  dropout_p: 0.1
+  keypoint_head: true
+  n_keypoints: 4
+
+loss:
+  deep_supervision_weights: [1]
+  bce_weight: 2.0
+  keypoint_weight: 100.0                # same as report 07 — the lesson
+                                         # was the kp gradient scale, not
+                                         # gate-target choice
+  keypoint_fg_weight: 10.0
+
+train:
+  epochs: 100
+  batch_size: 8
+  lr: 3.0e-4
+  optimizer: adamw
+  sgd_momentum: 0.9
+  weight_decay: 1.0e-4
+  seed: 42
+  num_workers_train: 16
+  num_workers_val: 16
+  scheduler:
+    type: polynomial_hf
+    warmup_ratio: 0.1
+    power: 0.9
+    lr_end: 1.0e-6
+  performance:
+    compile: true
+    compile_mode: max-autotune
+    amp: true
+    amp_dtype: bf16
+    channels_last: true
+    cudnn_benchmark: false
+    matmul_precision: high
+    prefetch_factor: 4
+  checkpoint_name: best_deeplabv3plus_keypoint_multi.pth
+
+eval:
+  threshold: 0.5
+
+postprocess:
+  max_dist: 100.0
+  ransac_threshold: 5.0
+  max_translation: 150.0

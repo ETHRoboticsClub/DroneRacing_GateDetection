@@ -80,6 +80,83 @@ def render_heatmap(
     return out
 
 
+def render_heatmap_multi(
+    corners_px: np.ndarray,
+    vis: np.ndarray,
+    *,
+    size: int,
+    sigma: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Multi-gate version of :func:`render_heatmap`.
+
+    Parameters
+    ----------
+    corners_px
+        ``(G, K, 2)`` array of inner-corner pixel coordinates for ``G``
+        gates × ``K`` corners each.
+    vis
+        ``(G, K)`` integer / boolean visibility flags. Per-(gate, corner)
+        invisible entries do not contribute a peak.
+    size
+        Heatmap spatial resolution (square), as in :func:`render_heatmap`.
+    sigma
+        Gaussian σ in pixels.
+
+    Returns
+    -------
+    out : np.ndarray
+        ``(K, size, size)`` float32 heatmap. Peak per channel is the
+        per-pixel **max** across gates (not sum) so the heatmap stays
+        bounded in ``[0, 1]`` even when two gates' corners coincide —
+        keeps the sigmoid head's loss surface well-conditioned.
+    vis_per_channel : np.ndarray
+        ``(K,)`` int32 mask, 1 if **any** gate has that corner visible,
+        0 otherwise. The MSE loss masks invisible channels so a channel
+        with no gate-visible corner contributes 0 — without this mask
+        the loss would push the sigmoid toward 0 everywhere on those
+        channels and hurt all-gates-occluded frames disproportionately.
+
+    Rationale
+    ---------
+    Empirical motivation in ``docs/report/09_largest_gate_null_result``:
+    single-gate-of-interest supervision (whether by file order or by
+    bbox area) has frame-to-frame ambiguity that the network learns AS
+    NOISE in multi-gate scenes. Multi-gate Gaussian targets remove the
+    "which gate" ambiguity from the loss entirely; the network is
+    rewarded for any peak at any gate's corner. Inference still does
+    soft-argmax (single instance), so deployment behaviour is unchanged.
+    The MonoRace paper (Bahnam et al. 2026) handles multi-gate by
+    *adaptive cropping* at the input via an EKF prior; we don't have
+    EKF state online yet, so this is the alternative path that also
+    avoids contradictory loss gradients.
+    """
+    if corners_px.ndim != 3 or corners_px.shape[-1] != 2:
+        raise ValueError(
+            f"corners_px must have shape (G, K, 2); got {corners_px.shape}"
+        )
+    G, K, _ = corners_px.shape
+    out = np.zeros((K, size, size), dtype=np.float32)
+    vis_per_channel = np.zeros(K, dtype=np.int32)
+    if G == 0:
+        return out, vis_per_channel
+    yy, xx = np.meshgrid(
+        np.arange(size, dtype=np.float32),
+        np.arange(size, dtype=np.float32),
+        indexing="ij",
+    )
+    two_sigma_sq = 2.0 * sigma * sigma
+    for g in range(G):
+        for k in range(K):
+            if vis[g, k] <= 0:
+                continue
+            cx, cy = float(corners_px[g, k, 0]), float(corners_px[g, k, 1])
+            d2 = (xx - cx) ** 2 + (yy - cy) ** 2
+            peak = np.exp(-d2 / two_sigma_sq).astype(np.float32)
+            out[k] = np.maximum(out[k], peak)
+            vis_per_channel[k] = 1
+    return out, vis_per_channel
+
+
 def weighted_heatmap_mse(
     pred: torch.Tensor,
     target: torch.Tensor,
