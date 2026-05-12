@@ -1,0 +1,160 @@
+\documentclass[10pt,a4paper]{article}
+
+\usepackage[margin=2.0cm]{geometry}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{ragged2e}
+% Ragged-right X column so the line-breaker doesn't have to flush-right
+% texttt-heavy descriptions (which overflow when forced to justify).
+\newcolumntype{Y}{>{\RaggedRight\arraybackslash}X}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+
+% Allow LaTeX a little slack when line-breaking inside tabularx X columns
+% with many \texttt{} fragments (unbreakable strings).
+\setlength{\emergencystretch}{3em}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  urlcolor=blue!50!black,
+  citecolor=black,
+}
+
+\definecolor{cgreen}{HTML}{1A7F37}
+\definecolor{cred}{HTML}{C9302C}
+\definecolor{camber}{HTML}{B58105}
+
+\setlist[itemize]{leftmargin=*,topsep=2pt,itemsep=1pt}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small Gate detection status}
+\fancyhead[R]{\small ETHRC Aeronautics --- 2026-05-10}
+\fancyfoot[C]{\small \thepage}
+\renewcommand{\headrulewidth}{0.3pt}
+
+\title{\vspace{-1.5em}Gate detection --- what works \& what is left to test}
+\author{Mahbod Tajdini \\ \small \texttt{mtajdini@ethrobotics.ch} --- ETHRC Aeronautics}
+\date{2026-05-10}
+
+\begin{document}
+\maketitle
+\thispagestyle{fancy}
+\vspace{-1em}
+
+\section*{TL;DR}
+
+The detection pipeline (segmentation + multi-task keypoint head + classical
+QuAdGate) trains, exports to TensorRT, and produces sub-pixel-accurate corners
+on TII piloted footage. The deployment-headline checkpoint
+\texttt{best\_deeplabv3plus\_keypoint.pth} achieves \textbf{85.1\,\% detection rate}
+at \textbf{1.01\,px median} corner error on flight-01p-ellipse, single forward
+pass, no prior, no EKF state, 102\,fps wall-clock on an RTX 5090 (0.47\,ms TRT
+FP16). What is \emph{not} yet measured: detection rate on flights other than
+the one we keep benching, false-positive rate on no-gate frames, real-recorded
+footage (blocked on Drive data).
+
+\section{What works today}
+
+Numbers are on \texttt{flight-01p-ellipse} (TII v3.0.0 piloted, 423 frames,
+seed 42), reproducible from
+\href{run:../07_keypoint_head/findings.md}{report 07}.
+
+\begin{description}[leftmargin=1.4em,style=nextline,itemsep=2pt,topsep=2pt]
+  \item[Segmentation backbone.]
+    DeepLabV3+ with ResNet-34 + ImageNet pretrain --- val IoU \textbf{0.872}.
+    \hfill {\small\itshape report 05 / 07}
+  \item[Keypoint head.]
+    Multi-task 4-channel Gaussian-heatmap head, sub-pixel decode via
+    soft-argmax. \hfill {\small\itshape report 07}
+  \item[Deployment-mode bench (\texttt{model\_direct}).]
+    \textbf{85.1\,\% detection} / \textbf{1.01\,px median} / 63.7\,\% within 5\,px
+    on flight-01p-ellipse (no GT prior, no EKF state).
+    \hfill {\small\itshape report 07}
+  \item[Prior-mode framework.]
+    Five priors wired in one bench script: \texttt{gt}, \texttt{noisy},
+    \texttt{none}, \texttt{model}, \texttt{model\_direct}, \texttt{ekf}.
+    \hfill {\small\itshape reports 06 / 07 / 08}
+  \item[TRT FP16 export.]
+    Multi-task graph exports to ONNX (opset 18) and builds an FP16
+    TRT engine in $\sim 6\,$s. \textbf{0.47\,ms / 2128 fps on RTX 5090},
+    projects $\sim$50--100\,fps on Jetson Orin NX.
+    \hfill {\small\itshape report 03 + \texttt{bench\_trt\_keypoint.py}}
+  \item[TRT numerical correctness.]
+    TRT FP16 output matches torch FP32 to
+    $|trt - torch|_\infty < 5\!\times\!10^{-4}$ on uniform-$[0,1]$ input.
+    \hfill {\small\itshape same}
+  \item[Multi-gate sibling checkpoint.]
+    Multi-gate Gaussian targets + coherent-quad decode at inference;
+    88.7\,\% det / 1.26\,px median (tied with report 07 on within-5\,px).
+    \hfill {\small\itshape report 10}
+\end{description}
+
+\paragraph{Knock-on consequences ruled in.}
+TII-distribution detection is solved (within the constraints of the
+report-07 metric); architecture exports cleanly to TRT; multi-task did
+not regress seg val IoU; the multi-gate-target experiment closed without
+moving the headline either way.
+
+\section{What is \emph{not} measured (and matters for detection reliability)}
+
+\begin{tabularx}{\linewidth}{@{}c Y r@{}}
+\toprule
+\textbf{\#} & \textbf{Open test} & \textbf{Cost} \\
+\midrule
+1 & Cross-flight bench: pick 4--5 flights from \texttt{*-ellipse}, \texttt{*-lemniscate}, \texttt{*-trackRATM}. Tells us if 85\,\% generalises across camera trajectory and track layout. & {\small \textcolor{cgreen}{30 min}} \\
+2 & False-positive rate on no-gate frames: scan the dataset for empty label files (start of each flight, between-gate transits), measure how often the model fires anyway at the current 0.3 threshold. & {\small \textcolor{cgreen}{30 min}} \\
+3 & Cross-flight bench of the multi-gate sibling ckpt: does the +3.6\,pp detection-rate gain in report 10 hold out of distribution? & {\small \textcolor{cgreen}{15 min}} \\
+4 & Confidence calibration: replace $\text{peak} \!\geq\! 0.3$ with peak~+~spatial concentration (KL divergence of the peak's $7\!\times\!7$ window from a $\sigma\!=\!3$ Gaussian). Catches doorway-style false positives in report 07's sample panel. & {\small \textcolor{camber}{2 h}} \\
+5 & Bench on \texttt{flight-01p-fixed} (the original 82\,\% headline): blocked on Drive data + missing \texttt{scripts/prepare\_labels.py}. & {\small \textcolor{cred}{blocked}} \\
+6 & Real-footage bench (the README's 39\,\% number): blocked on Drive data. & {\small \textcolor{cred}{blocked}} \\
+7 & Heavier motion-blur augmentation + retrain. Current aug caps at 15\,px blur kernel; trackRATM samples wander on fast-turn frames. & {\small \textcolor{camber}{1 day}} \\
+8 & Real-data fine-tuning (encoder frozen, decoder + head on team-recorded footage). & {\small \textcolor{cred}{blocked}} \\
+\bottomrule
+\end{tabularx}
+
+\paragraph{What the open tests do \emph{not} cover.}
+``Which gate is the next one to fly through'' is not a perception question
+under the current architecture --- it is a planner-side concern that needs
+an EKF + track-plan + plane-test (the MonoRace recipe, Bahnam et al. 2026).
+That workstream is items 4--6 on the master rank list (Kalman fusion,
+ROS2, Orin NX) and intentionally outside the scope of ``are gates
+detected reliably.''
+
+\section{Recommended order}
+
+Items 1 and 2 cost about an hour combined and are pure measurement. They
+tell us whether items 4 / 7 are actually worth doing, or whether the
+current numbers already generalise. Recommended sequence:
+
+\begin{enumerate}
+  \item[\textbf{1.}] \textbf{Item 1 (cross-flight bench)} first --- tells us
+        whether 85.1\,\% is representative or one-flight luck. ~30 min.
+  \item[\textbf{2.}] \textbf{Item 2 (false-positive rate)} --- closes the
+        precision picture. If FP rate is already $<\!2\,\%$, item 4 isn't
+        worth doing. ~30 min.
+  \item[\textbf{3.}] \textbf{Item 4 (confidence calibration)} only if item
+        2 shows a real false-positive problem. ~2 h.
+  \item[\textbf{4.}] \textbf{Item 3 (multi-gate sibling cross-flight)} ---
+        informational, can be skipped without affecting the deployment path.
+\end{enumerate}
+
+Items 5--6 unblock once the Drive data lands on qolam; item 7 is the only
+remaining unblocked retrain lever and only justifies its cost if item 1
+shows trajectory-specific failures.
+
+\paragraph{Bottom line.}
+The model detects gates well on the slice we have benched, and we have
+enough plumbing (TRT export, prior-mode framework, multiple checkpoints)
+to ship something. The remaining ``make sure'' work is mostly
+empirical measurement on un-benched slices --- about 1\,h of work, no
+retraining, no code changes for items 1--3.
+
+\end{document}
