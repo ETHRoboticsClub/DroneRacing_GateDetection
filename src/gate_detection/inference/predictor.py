@@ -245,19 +245,21 @@ class GatePredictor:
         #   (frankenstein quad). Coherent_quad_decode enumerates
         #   top-3 peaks per channel and picks the most-rectangular
         #   combination so all 4 channels align on one gate.
-        # If coherent_quad_decode fails (no valid spatial ordering), we
-        # fall back to soft-argmax — better a noisy answer than no answer
-        # for the prior. CLAUDE.md §6: announce the fallback once.
+        # If coherent_quad_decode fails to find a spatially-ordered
+        # combo, the model genuinely has no usable gate-quad on this
+        # frame — return None for kp_xy/kp_conf so the caller counts
+        # this as a non-detection. Previously this branch fell through
+        # to global soft-argmax, which produced Frankenstein-quad
+        # detections that passed the 0.3 confidence threshold and
+        # inflated FP rate per report 12's reviewer #2 finding.
         if self.multi_gate_target:
             kp_xy = coherent_quad_decode(kp_pred_np)
             if kp_xy is None:
-                print(
-                    "[WARN] predict_keypoints: coherent_quad_decode found "
-                    "no spatially-ordered peak combo on this frame; "
-                    "falling back to global soft-argmax (Frankenstein risk).",
-                    flush=True,
-                )
-                kp_xy = soft_argmax_2d(kp_pred.float()).squeeze(0).cpu().numpy()
+                # No fall-through; CLAUDE.md §6 — abort cleanly, signal
+                # non-detection to the caller. No [WARN] in the hot loop
+                # (would spam logs on no-gate frames where this is the
+                # *correct* behaviour).
+                return img_rgb, seg, None, None
         else:
             kp_xy = soft_argmax_2d(kp_pred.float()).squeeze(0).cpu().numpy()
         kp_conf = heatmap_peak_confidence(kp_pred.float()).squeeze(0).cpu().numpy()
