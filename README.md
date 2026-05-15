@@ -24,20 +24,26 @@ Training data: [tii-racing drone racing dataset](https://github.com/tii-racing/d
 - **Inference & visualisation**: `inference.py` with per-step QuAdGate debug mode
 - **Data preparation**: label synthesis (29-col with outer corners), interactive QA viewer, background download, offline augmentation (5× multiplier)
 
-### Deployment-relevant headline (current)
+### Deployment-relevant headline (current — revised report 12)
 
-On `flight-01p-ellipse` (TII v3.0.0 piloted, 423 frames, no GT prior, no EKF state) the new multi-task DeepLabV3+ checkpoint with the keypoint head (plan P1-1, see [`docs/report/07_keypoint_head/findings.md`](docs/report/07_keypoint_head/findings.md)) reaches:
+> **Headline checkpoint revised** as of [`docs/report/12_cross_flight_held_out/findings.md`](docs/report/12_cross_flight_held_out/findings.md): the previous report-07 ckpt (`best_deeplabv3plus_keypoint.pth`, single-gate target) memorized `flight-01p-ellipse` and **fails to detect anything on the only held-out piloted flight** (`flight-06p-ellipse`, 0 SAM training crops). The Stage 2 sibling (`best_deeplabv3plus_keypoint_multi.pth`, multi-gate Gaussian targets, see [`docs/report/10_multi_gate_target/findings.md`](docs/report/10_multi_gate_target/findings.md)) generalizes and is the new deployment checkpoint.
 
-| Mode | Det rate | Mean cerr | Median cerr | ≤ 5 px | ≤ 10 px | Throughput |
+On `flight-06p-ellipse` (TII v3.0.0 piloted, **held-out — 0 crops in SAM training**, 374 frames sampled stride 30, no GT prior, no EKF state):
+
+| Mode | Det rate | Mean cerr | Median cerr | ≤ 5 px | Throughput | Notes |
 |---|---|---|---|---|---|---|
-| `model_direct` (head only, **single forward pass**) | **85.1 %** | 12.6 px | **1.01 px** | 63.7 % | 68.3 % | **102 fps wall-clock** |
-| `model` (head → QuAdGate refinement) | 59.1 % | 7.2 px | 1.15 px | **72.7 %** | 75.9 % | 54 fps wall-clock |
+| `model_direct` (head only, **single forward pass**, `coherent_quad_decode`) | **78.9 %** | 12.2 px | **1.30 px** | **61.0 %** | **0.44 ms / 2274 fps** TRT FP16 on RTX 5090 | Deployment headline. |
+| `gt` (perfect prior — refinement benchmark only) | 57.0 % | 2.17 px | 0.74 px | **95.8 %** | — | Confirms the seg head generalizes — perfect-prior gives near-perfect refinement on the held-out flight. |
 
-The keypoint head is in `configs/deeplabv3plus_keypoint.yaml`; the checkpoint round-trips its own metadata so the predictor builds the multi-task model automatically.
+False-positive rate on no-gate frames of the same held-out flight (upper bound — labellers skip non-trivial frames so some "fires" may be detecting unlabelled gates): **2.4 % (4/166 at threshold 0.3)**.
+
+Cross-flight detection rate on the four in-training flights tested ranges 80.5–88.7 %, within-5 px ranges 34.7–66.2 % — see [report 12](docs/report/12_cross_flight_held_out/findings.md) for the per-flight table.
+
+The keypoint head is in `configs/deeplabv3plus_keypoint_multi.yaml`; the checkpoint round-trips its own metadata so the predictor auto-detects the multi-gate decode path. The single-gate `*_keypoint.pth` checkpoint is preserved as an experimental sibling — see report 07 — but is not the deployment headline.
 
 ### Known issues — historical numbers
 
-> **Caveat — read before quoting any historical number below.** The 82 % / 5.0 px / 30.7 px / "0 % under realistic prior" headlines all measured QuAdGate-only with various artificial priors (GT, GT + jitter, centred default). They are not deployment numbers. See [`docs/report/06_realistic_priors/findings.md`](docs/report/06_realistic_priors/findings.md) for the full `gt` / `noisy` / `none` prior-mode ablation that exposed the prior-sensitivity, and report 07 (above) for the multi-task keypoint head that supersedes the "0 % within 5 px under realistic prior" verdict with a deployable 64–73 %.
+> **Caveat — read before quoting any historical number below.** The 82 % / 5.0 px / 30.7 px / "0 % under realistic prior" headlines all measured QuAdGate-only with various artificial priors (GT, GT + jitter, centred default). They are not deployment numbers. See [`docs/report/06_realistic_priors/findings.md`](docs/report/06_realistic_priors/findings.md) for the full `gt` / `noisy` / `none` prior-mode ablation that exposed the prior-sensitivity, and [report 12](docs/report/12_cross_flight_held_out/findings.md) (revising report 07's headline upward to the multi-gate ckpt) for the deployable 61 % within-5 px result on the held-out flight.
 >
 > The original 82 % was measured on `flight-01p-fixed` with 29-col labels produced by `scripts/prepare_labels.py` — a script absent from the current checkout (tracked as plan P0-4) — and the flight itself is on Google Drive, not yet on qolam. On `flight-01p-ellipse` with the 17-col labels TII ships and `parse_pixel_corners(..., synth_outer=True)`, the equivalent `gt`-prior numbers are **67.4 % detection** with **2.78 px mean corner error** at **93.7 %** within 5 px. The 39 % real-footage detection rate further down is a separate domain-gap issue and is unaffected by the prior caveat — that one stands as a deliverable until we get the team-recorded flights on qolam (P1-2).
 

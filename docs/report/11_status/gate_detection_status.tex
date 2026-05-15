@@ -36,36 +36,42 @@
 \pagestyle{fancy}
 \fancyhf{}
 \fancyhead[L]{\small Gate detection status}
-\fancyhead[R]{\small ETHRC Aeronautics --- 2026-05-10}
+\fancyhead[R]{\small ETHRC Aeronautics --- 2026-05-15}
 \fancyfoot[C]{\small \thepage}
 \renewcommand{\headrulewidth}{0.3pt}
 
 \title{\vspace{-1.5em}Gate detection --- what works \& what is left to test}
 \author{Mahbod Tajdini \\ \small \texttt{mtajdini@ethrobotics.ch} --- ETHRC Aeronautics}
-\date{2026-05-10}
+\date{2026-05-15 (rev.\ post-report-12)}
 
 \begin{document}
 \maketitle
 \thispagestyle{fancy}
 \vspace{-1em}
 
-\section*{TL;DR}
+\section*{TL;DR (revised after report 12)}
 
-The detection pipeline (segmentation + multi-task keypoint head + classical
-QuAdGate) trains, exports to TensorRT, and produces sub-pixel-accurate corners
-on TII piloted footage. The deployment-headline checkpoint
-\texttt{best\_deeplabv3plus\_keypoint.pth} achieves \textbf{85.1\,\% detection rate}
-at \textbf{1.01\,px median} corner error on flight-01p-ellipse, single forward
-pass, no prior, no EKF state, 102\,fps wall-clock on an RTX 5090 (0.47\,ms TRT
-FP16). What is \emph{not} yet measured: detection rate on flights other than
-the one we keep benching, false-positive rate on no-gate frames, real-recorded
-footage (blocked on Drive data).
+\textbf{Headline checkpoint revised.} The previous report-07 ckpt
+(\texttt{best\_deeplabv3plus\_keypoint.pth}, single-gate target) was
+shown by report 12 to have memorised \texttt{flight-01p-ellipse}; on
+the only piloted flight held out from SAM training
+(\texttt{flight-06p-ellipse}, 0 train crops) it produces 0\,\% detection.
+The Stage~2 sibling (\texttt{best\_deeplabv3plus\_keypoint\_multi.pth},
+multi-gate Gaussian targets + \texttt{coherent\_quad\_decode}) generalises
+and is the new deployment checkpoint, delivering \textbf{78.9\,\% detection rate}
+at \textbf{1.30\,px median} / \textbf{61.0\,\% within 5\,px} on the same
+held-out flight, single forward pass, no prior, no EKF state, \textbf{0.44\,ms
+TRT FP16 / 2274\,fps on an RTX 5090}. Upper-bound false-positive rate on no-gate
+frames of the held-out flight: \textbf{2.4\,\%} (4/166 at conf $\geq 0.3$).
+What is \emph{not} yet measured: bench on the autonomous held-out flights
+in SAM val (7 \texttt{XXa} flights), real-recorded footage (blocked on
+Drive data), bootstrap CI on the reported percentages.
 
 \section{What works today}
 
-Numbers are on \texttt{flight-01p-ellipse} (TII v3.0.0 piloted, 423 frames,
-seed 42), reproducible from
-\href{run:../07_keypoint_head/findings.md}{report 07}.
+Numbers are on \texttt{flight-06p-ellipse} (TII v3.0.0 piloted, \textbf{held-out --- 0 SAM training crops},
+374 frames sampled at stride 30, seed 42), reproducible from
+\href{run:../12_cross_flight_held_out/findings.md}{report 12}.
 
 \begin{description}[leftmargin=1.4em,style=nextline,itemsep=2pt,topsep=2pt]
   \item[Segmentation backbone.]
@@ -74,34 +80,53 @@ seed 42), reproducible from
   \item[Keypoint head.]
     Multi-task 4-channel Gaussian-heatmap head, sub-pixel decode via
     soft-argmax. \hfill {\small\itshape report 07}
-  \item[Deployment-mode bench (\texttt{model\_direct}).]
-    \textbf{85.1\,\% detection} / \textbf{1.01\,px median} / 63.7\,\% within 5\,px
-    on flight-01p-ellipse (no GT prior, no EKF state).
-    \hfill {\small\itshape report 07}
+  \item[Deployment-mode bench (\texttt{model\_direct}, held-out 06p).]
+    \textbf{78.9\,\% detection} / \textbf{1.30\,px median} / 61.0\,\% within 5\,px
+    on flight-06p-ellipse (no GT prior, no EKF state, 0 SAM training crops).
+    \hfill {\small\itshape report 12}
+  \item[\texttt{gt}-prior bench on the same held-out flight.]
+    Confirms seg head transfers: \textbf{95.8\,\% within 5\,px} (perfect-prior
+    QuAdGate refinement) --- the seg head learned generalisable features
+    from the SAM-mask pipeline.
+    \hfill {\small\itshape report 12}
+  \item[False-positive rate (upper bound, held-out 06p, conf $\geq$ 0.3).]
+    \textbf{2.4\,\%} (4/166 sampled no-gate frames). Upper bound because
+    labellers skip non-trivial frames --- a ``fire'' may be detecting an
+    unlabelled gate.
+    \hfill {\small\itshape report 12}
+  \item[Fire-condition tightening.]
+    \texttt{coherent\_quad\_decode is None} no longer falls through to
+    soft-argmax; the predictor returns a non-detection cleanly (CLAUDE.md §6).
+    Cost: 2/297 lost detections; structural FP win (no Frankenstein quads).
+    \hfill {\small\itshape task 3, this turn}
   \item[Prior-mode framework.]
-    Five priors wired in one bench script: \texttt{gt}, \texttt{noisy},
+    Six priors wired in one bench script: \texttt{gt}, \texttt{noisy},
     \texttt{none}, \texttt{model}, \texttt{model\_direct}, \texttt{ekf}.
     \hfill {\small\itshape reports 06 / 07 / 08}
-  \item[TRT FP16 export.]
+  \item[TRT FP16 export (multi-gate ckpt, the new headline).]
     Multi-task graph exports to ONNX (opset 18) and builds an FP16
-    TRT engine in $\sim 6\,$s. \textbf{0.47\,ms / 2128 fps on RTX 5090},
+    TRT engine in $\sim 7\,$s. \textbf{0.44\,ms / 2274 fps on RTX 5090},
     projects $\sim$50--100\,fps on Jetson Orin NX.
-    \hfill {\small\itshape report 03 + \texttt{bench\_trt\_keypoint.py}}
+    \hfill {\small\itshape \texttt{bench\_trt\_keypoint.py}}
   \item[TRT numerical correctness.]
     TRT FP16 output matches torch FP32 to
-    $|trt - torch|_\infty < 5\!\times\!10^{-4}$ on uniform-$[0,1]$ input.
+    $|trt - torch|_\infty < 1.3\!\times\!10^{-3}$ (seg) / $2.4\!\times\!10^{-4}$ (kp)
+    on uniform-$[0,1]$ input.
     \hfill {\small\itshape same}
-  \item[Multi-gate sibling checkpoint.]
-    Multi-gate Gaussian targets + coherent-quad decode at inference;
-    88.7\,\% det / 1.26\,px median (tied with report 07 on within-5\,px).
-    \hfill {\small\itshape report 10}
+  \item[Segmentation backbone shared.]
+    DeepLabV3+ with ResNet-34 + ImageNet pretrain --- val IoU \textbf{0.872}
+    on SAM-cropped val. NB: this is per-crop IoU on the SAM val pool
+    (mostly 06p crops), not full-frame IoU on raw flight images.
+    \hfill {\small\itshape report 05 / 07}
 \end{description}
 
 \paragraph{Knock-on consequences ruled in.}
-TII-distribution detection is solved (within the constraints of the
-report-07 metric); architecture exports cleanly to TRT; multi-task did
-not regress seg val IoU; the multi-gate-target experiment closed without
-moving the headline either way.
+The architecture exports cleanly to TRT; multi-gate-target training
+generalises across flights (report 12); the deployment headline is
+now on a truly held-out flight, not an over-trained one. The
+single-gate ckpt (\texttt{best\_deeplabv3plus\_keypoint.pth}) is
+retained as a sibling for any future flight-specific use case but is
+not the deployment ckpt.
 
 \section{What is \emph{not} measured (and matters for detection reliability)}
 
@@ -109,14 +134,16 @@ moving the headline either way.
 \toprule
 \textbf{\#} & \textbf{Open test} & \textbf{Cost} \\
 \midrule
-1 & Cross-flight bench: pick 4--5 flights from \texttt{*-ellipse}, \texttt{*-lemniscate}, \texttt{*-trackRATM}. Tells us if 85\,\% generalises across camera trajectory and track layout. & {\small \textcolor{cgreen}{30 min}} \\
-2 & False-positive rate on no-gate frames: scan the dataset for empty label files (start of each flight, between-gate transits), measure how often the model fires anyway at the current 0.3 threshold. & {\small \textcolor{cgreen}{30 min}} \\
-3 & Cross-flight bench of the multi-gate sibling ckpt: does the +3.6\,pp detection-rate gain in report 10 hold out of distribution? & {\small \textcolor{cgreen}{15 min}} \\
-4 & Confidence calibration: replace $\text{peak} \!\geq\! 0.3$ with peak~+~spatial concentration (KL divergence of the peak's $7\!\times\!7$ window from a $\sigma\!=\!3$ Gaussian). Catches doorway-style false positives in report 07's sample panel. & {\small \textcolor{camber}{2 h}} \\
-5 & Bench on \texttt{flight-01p-fixed} (the original 82\,\% headline): blocked on Drive data + missing \texttt{scripts/prepare\_labels.py}. & {\small \textcolor{cred}{blocked}} \\
-6 & Real-footage bench (the README's 39\,\% number): blocked on Drive data. & {\small \textcolor{cred}{blocked}} \\
-7 & Heavier motion-blur augmentation + retrain. Current aug caps at 15\,px blur kernel; trackRATM samples wander on fast-turn frames. & {\small \textcolor{camber}{1 day}} \\
-8 & Real-data fine-tuning (encoder frozen, decoder + head on team-recorded footage). & {\small \textcolor{cred}{blocked}} \\
+1 & Bench remaining held-out flights (the 7 autonomous \texttt{XXa} flights in SAM val) on the multi-gate ckpt --- gives an out-of-piloted held-out generalisation curve. & {\small \textcolor{cgreen}{1 h}} \\
+2 & Bootstrap CI on all reported percentages (report 12's reviewer recommendation). Wilson CI on iid samples; cluster-bootstrap if temporal correlation matters. & {\small \textcolor{cgreen}{1 h}} \\
+3 & Visually inspect the 12 multi-gate \texttt{01p-ellipse} ``fires'' on no-gate frames --- separate ``model triggered on unlabelled real gate'' (not actually FP) from true precision loss. & {\small \textcolor{cgreen}{30 min}} \\
+4 & Per-flight seg-IoU dump to attribute cross-flight degradation to seg vs head vs QuAdGate. & {\small \textcolor{cgreen}{1 h}} \\
+5 & Confidence calibration: replace $\text{peak} \!\geq\! 0.3$ with peak~+~spatial concentration (KL divergence of the peak's $7\!\times\!7$ window from a $\sigma\!=\!3$ Gaussian). Catches the remaining FPs surviving \texttt{coherent\_quad\_decode}. & {\small \textcolor{camber}{2 h}} \\
+6 & Retrain with class-balanced SAM crops ($\sim$300/flight cap, removes 01p's 3$\times$ training advantage). Addresses the root cause behind report 12's findings. & {\small \textcolor{camber}{1 day}} \\
+7 & Bench on \texttt{flight-01p-fixed} (the original 82\,\% headline): blocked on Drive data + missing \texttt{scripts/prepare\_labels.py}. & {\small \textcolor{cred}{blocked}} \\
+8 & Real-footage bench (the README's 39\,\% number): blocked on Drive data. & {\small \textcolor{cred}{blocked}} \\
+9 & Real-data fine-tuning (encoder frozen, decoder + head on team-recorded footage). & {\small \textcolor{cred}{blocked}} \\
+10 & Heavier motion-blur augmentation + retrain. Current aug caps at 15\,px blur kernel. & {\small \textcolor{camber}{1 day}} \\
 \bottomrule
 \end{tabularx}
 
@@ -130,31 +157,37 @@ detected reliably.''
 
 \section{Recommended order}
 
-Items 1 and 2 cost about an hour combined and are pure measurement. They
-tell us whether items 4 / 7 are actually worth doing, or whether the
-current numbers already generalise. Recommended sequence:
+The original items 1--3 from this status note (cross-flight bench,
+FP-rate measurement, multi-gate sibling cross-flight) were done in
+report 12 and this turn's task batch. Headlines were revised accordingly.
+The revised next steps:
 
 \begin{enumerate}
-  \item[\textbf{1.}] \textbf{Item 1 (cross-flight bench)} first --- tells us
-        whether 85.1\,\% is representative or one-flight luck. ~30 min.
-  \item[\textbf{2.}] \textbf{Item 2 (false-positive rate)} --- closes the
-        precision picture. If FP rate is already $<\!2\,\%$, item 4 isn't
-        worth doing. ~30 min.
-  \item[\textbf{3.}] \textbf{Item 4 (confidence calibration)} only if item
-        2 shows a real false-positive problem. ~2 h.
-  \item[\textbf{4.}] \textbf{Item 3 (multi-gate sibling cross-flight)} ---
-        informational, can be skipped without affecting the deployment path.
+  \item[\textbf{1.}] \textbf{Item 6 (class-balanced retrain)} addresses
+        the \emph{root cause} of report 12's findings: the SAM training
+        pool over-represents 01p-ellipse 3$\times$, which is why the
+        single-gate ckpt memorised it. Cap per-flight at $\sim$300 crops
+        and retrain both ckpts. \textasciitilde 1 day.
+  \item[\textbf{2.}] \textbf{Item 1 (autonomous held-out bench)} ---
+        closes the held-out picture beyond just 06p. \textasciitilde 1 h.
+  \item[\textbf{3.}] \textbf{Items 2--4 (CI + visual inspection + per-flight
+        IoU)} --- statistical rigour + attribution. \textasciitilde 2--3 h
+        combined.
+  \item[\textbf{4.}] \textbf{Item 5 (confidence calibration)} only if
+        items 3--4 show the remaining 2.4\,\% FP rate is a real precision
+        loss, not labeller-skipped real gates. \textasciitilde 2 h.
 \end{enumerate}
 
-Items 5--6 unblock once the Drive data lands on qolam; item 7 is the only
-remaining unblocked retrain lever and only justifies its cost if item 1
-shows trajectory-specific failures.
+Items 7--9 unblock once the Drive data lands on qolam; item 10 is the
+only remaining unblocked retrain lever and only justifies its cost if
+held-out flights show motion-blur-specific failures.
 
 \paragraph{Bottom line.}
-The model detects gates well on the slice we have benched, and we have
-enough plumbing (TRT export, prior-mode framework, multiple checkpoints)
-to ship something. The remaining ``make sure'' work is mostly
-empirical measurement on un-benched slices --- about 1\,h of work, no
-retraining, no code changes for items 1--3.
+The model detects gates with \textbf{78.9\,\% recall / 1.30\,px median /
+2.4\,\% upper-bound FP rate} on the only piloted flight held out from
+SAM training, and we have enough plumbing (TRT export verified, prior-mode
+framework, two checkpoints) to ship. The single biggest remaining lever
+is the class-balanced retrain (item 6, root cause from report 12) ---
+everything else is incremental.
 
 \end{document}
