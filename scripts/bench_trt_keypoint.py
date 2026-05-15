@@ -260,9 +260,13 @@ def benchmark(engine_path: Path, *, n_warmup: int = 20, n_iters: int = 200, img_
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--checkpoint", default="checkpoints/best_deeplabv3plus_keypoint.pth")
-    p.add_argument("--onnx",       default="checkpoints/gate_detection_keypoint.onnx")
-    p.add_argument("--engine",     default="checkpoints/gate_detection_keypoint_fp16.engine")
+    # Default points at the multi-gate-target ckpt — the deployment
+    # headline as of report 12 (the single-gate ckpt fails the held-out
+    # generalization test on flight-06p-ellipse). To reproduce report 07
+    # numbers, pass --checkpoint checkpoints/best_deeplabv3plus_keypoint.pth.
+    p.add_argument("--checkpoint", default="checkpoints/best_deeplabv3plus_keypoint_multi.pth")
+    p.add_argument("--onnx",       default="checkpoints/gate_detection_keypoint_multi.onnx")
+    p.add_argument("--engine",     default="checkpoints/gate_detection_keypoint_multi_fp16.engine")
     p.add_argument("--n-iters",    type=int, default=200)
     args = p.parse_args()
 
