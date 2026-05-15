@@ -54,6 +54,8 @@ def main() -> None:
         keypoint_fg_weight= loss_cfg.get("keypoint_fg_weight", 10.0),
         heatmap_sigma=      cfg["data"].get("heatmap_sigma", 3.0),
         multi_gate_target=  cfg["data"].get("multi_gate_target", False),
+        per_flight_cap=     cfg["data"].get("per_flight_cap", None),
+        cap_seed=           cfg["data"].get("cap_seed", 42),
         optimizer_name=     cfg["train"].get("optimizer", "adamw"),
         sgd_momentum=       cfg["train"].get("sgd_momentum", 0.9),
         weight_decay=       cfg["train"].get("weight_decay", 1e-4),

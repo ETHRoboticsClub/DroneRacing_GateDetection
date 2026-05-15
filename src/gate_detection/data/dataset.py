@@ -173,6 +173,8 @@ class GateDataset(Dataset):
         heatmap_sigma: float = 3.0,
         n_keypoints: int = 4,
         multi_gate_target: bool = False,
+        per_flight_cap: int | None = None,
+        cap_seed: int = 42,
     ):
         self.img_size = img_size
         self.augment = augment
@@ -182,6 +184,8 @@ class GateDataset(Dataset):
         self.heatmap_sigma = heatmap_sigma
         self.n_keypoints = n_keypoints
         self.multi_gate_target = multi_gate_target
+        self.per_flight_cap = per_flight_cap
+        self.cap_seed = cap_seed
         if multi_gate_target and not keypoint_heatmap:
             # CLAUDE.md §6: surface the inconsistency loudly. The flag
             # has no meaning without keypoint_heatmap=True.
@@ -191,7 +195,7 @@ class GateDataset(Dataset):
                 "target rendering to do anything."
             )
         # second element is mask_path (SAM mode) or lbl_path (label mode)
-        self.samples: list[tuple[str, str]] = []
+        all_samples: list[tuple[str, str]] = []
 
         skipped = 0
         for d in sample_dirs:
@@ -207,11 +211,62 @@ class GateDataset(Dataset):
                     if not os.path.exists(mask_p):
                         skipped += 1
                         continue
-                    self.samples.append((img_p, mask_p))
+                    all_samples.append((img_p, mask_p))
                 else:
                     lbl = os.path.join(d, stem + ".txt")
                     if os.path.exists(lbl):
-                        self.samples.append((img_p, lbl))
+                        all_samples.append((img_p, lbl))
+
+        # Class-balanced sampling (task 2 from report-12 next-steps).
+        # Without this, the SAM training pool has a 3× over-representation
+        # of flight-01p-ellipse (906 crops) vs flight-13p-trackRATM (303),
+        # which report 12 identified as the root cause of the cross-flight
+        # generalisation gap. When per_flight_cap is set, we group samples
+        # by flight name (extracted from filename prefix
+        # ``flight-XXp-traj__...``) and deterministically sample up to
+        # ``per_flight_cap`` per flight using ``random.Random(cap_seed)``.
+        # Files without a parseable flight prefix are kept verbatim and
+        # logged with [WARN] (CLAUDE.md §6 — no silent fallback).
+        if per_flight_cap is not None:
+            import re
+            import random as _random
+            flight_re = re.compile(r"(flight-[0-9]+[apAP]?-[a-zA-Z0-9]+)")
+            grouped: dict[str, list[tuple[str, str]]] = {}
+            unknown: list[tuple[str, str]] = []
+            for s in all_samples:
+                base = os.path.basename(s[0])
+                m = flight_re.search(base)
+                if m is None:
+                    unknown.append(s)
+                else:
+                    grouped.setdefault(m.group(1), []).append(s)
+            if unknown:
+                print(
+                    f"  [WARN] GateDataset.per_flight_cap: "
+                    f"{len(unknown)} samples have no parseable flight prefix; "
+                    f"keeping them verbatim (no cap applied).",
+                    flush=True,
+                )
+            rng = _random.Random(cap_seed)
+            balanced: list[tuple[str, str]] = list(unknown)
+            for flight, samples in sorted(grouped.items()):
+                if len(samples) <= per_flight_cap:
+                    balanced.extend(samples)
+                else:
+                    rng.shuffle(samples)
+                    balanced.extend(samples[:per_flight_cap])
+            # Sort for determinism across runs (Python dict iteration
+            # order is insertion-stable but we want sorted regardless).
+            balanced.sort(key=lambda s: s[0])
+            print(
+                f"  [GateDataset] per_flight_cap={per_flight_cap} "
+                f"(seed={cap_seed}): {len(all_samples)} -> {len(balanced)} "
+                f"samples across {len(grouped)} flights.",
+                flush=True,
+            )
+            self.samples = balanced
+        else:
+            self.samples = all_samples
 
         if use_sam_masks and skipped:
             print(

@@ -58,6 +58,8 @@ def build_dataloaders(
     heatmap_sigma: float = 3.0,
     n_keypoints: int = 4,
     multi_gate_target: bool = False,
+    per_flight_cap: int | None = None,
+    cap_seed: int = 42,
     num_workers_train: int = 12,
     num_workers_val: int = 12,
     prefetch_factor: int = 4,
@@ -73,12 +75,16 @@ def build_dataloaders(
         use_sam_masks=use_sam_masks, imagenet_norm=imagenet_norm,
         keypoint_heatmap=keypoint_heatmap, heatmap_sigma=heatmap_sigma,
         n_keypoints=n_keypoints, multi_gate_target=multi_gate_target,
+        per_flight_cap=per_flight_cap, cap_seed=cap_seed,
     )
+    # Val pool is NOT class-balanced — we want to measure generalisation
+    # on whatever the val split contains, not a sub-sampled version.
     val_ds = GateDataset(
         val_dirs, img_size=img_size, augment=False,
         use_sam_masks=use_sam_masks, imagenet_norm=imagenet_norm,
         keypoint_heatmap=keypoint_heatmap, heatmap_sigma=heatmap_sigma,
         n_keypoints=n_keypoints, multi_gate_target=multi_gate_target,
+        per_flight_cap=None,
     )
 
     # persistent_workers avoids re-spawning the worker pool every epoch
@@ -352,6 +358,8 @@ def train(
     keypoint_fg_weight: float = 10.0,
     heatmap_sigma: float = 3.0,
     multi_gate_target: bool = False,
+    per_flight_cap: int | None = None,
+    cap_seed: int = 42,
     seed: int = 42,
     data_root: str | os.PathLike | None = None,
     checkpoint_dir: str | os.PathLike = CHECKPOINTS_ROOT,
@@ -460,6 +468,8 @@ def train(
         heatmap_sigma=heatmap_sigma,
         n_keypoints=n_keypoints,
         multi_gate_target=multi_gate_target,
+        per_flight_cap=per_flight_cap,
+        cap_seed=cap_seed,
         num_workers_train=num_workers_train,
         num_workers_val=num_workers_val,
         prefetch_factor=prefetch_factor,
@@ -606,6 +616,8 @@ def train(
                         "imagenet_norm": imagenet_norm,
                         "heatmap_sigma": heatmap_sigma,
                         "multi_gate_target": multi_gate_target,
+                        "per_flight_cap": per_flight_cap,
+                        "cap_seed": cap_seed,
                     },
                     "seed": seed,
                     "optimizer": optimizer.state_dict(),
@@ -641,6 +653,8 @@ def train(
                 "imagenet_norm": imagenet_norm,
                 "heatmap_sigma": heatmap_sigma,
                 "multi_gate_target": multi_gate_target,
+                "per_flight_cap": per_flight_cap,
+                "cap_seed": cap_seed,
             },
             "seed": seed,
             "val_loss": best_val_loss,
