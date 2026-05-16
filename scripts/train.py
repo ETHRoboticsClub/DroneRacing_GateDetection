@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 
 from gate_detection.config import load_config
 from gate_detection.paths import DATA_ROOT, SAM_ROOT, SYN_ROOT
@@ -33,11 +34,38 @@ def main() -> None:
     data_root = str(SAM_ROOT if use_sam_masks else SYN_ROOT)
     loss_cfg = cfg["loss"]
 
+    # Pre-flight validation for the finetune-cookbook config surface
+    # (report 14, Tier 3.6). The dataset silently skips directories that
+    # don't exist (GateDataset.__init__: ``if not os.path.isdir(d): continue``),
+    # which means a stale ``TODO_PATH_...`` placeholder in the template
+    # would silently produce a TII-only training run — the opposite of
+    # what the user intended. Fail loudly here so the mistake is caught
+    # at config-load time, not after a 6-hour run.
+    extra_train_dirs = cfg["data"].get("extra_train_dirs") or []
+    for d in extra_train_dirs:
+        if "TODO" in str(d).upper():
+            raise ValueError(
+                f"data.extra_train_dirs contains an un-filled template "
+                f"placeholder: {d!r}. Replace it with a real path or "
+                f"remove the key entirely before training."
+            )
+        if not os.path.isdir(d):
+            raise FileNotFoundError(
+                f"data.extra_train_dirs[i]={d!r} does not exist; the "
+                f"dataset would silently skip it. Fix the path."
+            )
+    init_from = cfg["train"].get("init_from")
+    if init_from is not None and not os.path.isfile(init_from):
+        raise FileNotFoundError(
+            f"train.init_from={init_from!r} does not exist; cannot resume."
+        )
+
     train(
         epochs=             args.epochs     if args.epochs is not None     else cfg["train"]["epochs"],
         batch_size=         args.batch_size if args.batch_size is not None else cfg["train"]["batch_size"],
         base_lr=            args.lr         if args.lr is not None         else cfg["train"]["lr"],
         augment=            not args.no_aug,
+        augment_strong=     cfg["data"].get("augment_strong", False),
         seed=               args.seed if args.seed is not None else cfg["train"].get("seed", 42),
         img_size=           cfg["data"]["img_size"],
         use_sam_masks=      use_sam_masks,
@@ -56,6 +84,10 @@ def main() -> None:
         multi_gate_target=  cfg["data"].get("multi_gate_target", False),
         per_flight_cap=     cfg["data"].get("per_flight_cap", None),
         cap_seed=           cfg["data"].get("cap_seed", 42),
+        sample_dir_weights= cfg["data"].get("sample_dir_weights", None),
+        extra_train_dirs=   cfg["data"].get("extra_train_dirs", None),
+        init_from=          cfg["train"].get("init_from", None),
+        freeze_encoder=     cfg["train"].get("freeze_encoder", False),
         optimizer_name=     cfg["train"].get("optimizer", "adamw"),
         sgd_momentum=       cfg["train"].get("sgd_momentum", 0.9),
         weight_decay=       cfg["train"].get("weight_decay", 1e-4),

@@ -167,6 +167,7 @@ class GateDataset(Dataset):
         sample_dirs: Iterable[str],
         img_size: int = 384,
         augment: bool = True,
+        augment_strong: bool = False,
         use_sam_masks: bool = False,
         imagenet_norm: bool = False,
         keypoint_heatmap: bool = False,
@@ -175,9 +176,11 @@ class GateDataset(Dataset):
         multi_gate_target: bool = False,
         per_flight_cap: int | None = None,
         cap_seed: int = 42,
+        sample_dir_weights: list[int] | None = None,
     ):
         self.img_size = img_size
         self.augment = augment
+        self.augment_strong = augment_strong
         self.use_sam_masks = use_sam_masks
         self.imagenet_norm = imagenet_norm
         self.keypoint_heatmap = keypoint_heatmap
@@ -186,6 +189,7 @@ class GateDataset(Dataset):
         self.multi_gate_target = multi_gate_target
         self.per_flight_cap = per_flight_cap
         self.cap_seed = cap_seed
+        self.sample_dir_weights = sample_dir_weights
         if multi_gate_target and not keypoint_heatmap:
             # CLAUDE.md §6: surface the inconsistency loudly. The flag
             # has no meaning without keypoint_heatmap=True.
@@ -194,11 +198,30 @@ class GateDataset(Dataset):
                 "the keypoint head must be active for the multi-gate "
                 "target rendering to do anything."
             )
-        # second element is mask_path (SAM mode) or lbl_path (label mode)
-        all_samples: list[tuple[str, str]] = []
+
+        # Materialise sample_dirs once so we can both iterate over it
+        # and len() it (callers may pass a generator).
+        sample_dirs_list: list[str] = list(sample_dirs)
+        if sample_dir_weights is not None:
+            if len(sample_dir_weights) != len(sample_dirs_list):
+                raise ValueError(
+                    f"sample_dir_weights has length {len(sample_dir_weights)} "
+                    f"but sample_dirs has length {len(sample_dirs_list)}; "
+                    f"they must match."
+                )
+            if any(w < 0 for w in sample_dir_weights):
+                raise ValueError(
+                    f"sample_dir_weights must be non-negative; got "
+                    f"{sample_dir_weights}."
+                )
+
+        # third element is the source-directory index; needed to apply
+        # ``sample_dir_weights`` AFTER ``per_flight_cap`` (so caps are
+        # honoured per flight before replication). Stripped at the end.
+        all_samples: list[tuple[str, str, int]] = []
 
         skipped = 0
-        for d in sample_dirs:
+        for src_idx, d in enumerate(sample_dirs_list):
             if not os.path.isdir(d):
                 continue
             for f in sorted(os.listdir(d)):
@@ -211,11 +234,11 @@ class GateDataset(Dataset):
                     if not os.path.exists(mask_p):
                         skipped += 1
                         continue
-                    all_samples.append((img_p, mask_p))
+                    all_samples.append((img_p, mask_p, src_idx))
                 else:
                     lbl = os.path.join(d, stem + ".txt")
                     if os.path.exists(lbl):
-                        all_samples.append((img_p, lbl))
+                        all_samples.append((img_p, lbl, src_idx))
 
         # Class-balanced sampling (task 2 from report-12 next-steps).
         # Without this, the SAM training pool has a 3× over-representation
@@ -231,8 +254,8 @@ class GateDataset(Dataset):
             import re
             import random as _random
             flight_re = re.compile(r"(flight-[0-9]+[apAP]?-[a-zA-Z0-9]+)")
-            grouped: dict[str, list[tuple[str, str]]] = {}
-            unknown: list[tuple[str, str]] = []
+            grouped: dict[str, list[tuple[str, str, int]]] = {}
+            unknown: list[tuple[str, str, int]] = []
             for s in all_samples:
                 base = os.path.basename(s[0])
                 m = flight_re.search(base)
@@ -248,7 +271,7 @@ class GateDataset(Dataset):
                     flush=True,
                 )
             rng = _random.Random(cap_seed)
-            balanced: list[tuple[str, str]] = list(unknown)
+            balanced: list[tuple[str, str, int]] = list(unknown)
             for flight, samples in sorted(grouped.items()):
                 if len(samples) <= per_flight_cap:
                     balanced.extend(samples)
@@ -264,9 +287,35 @@ class GateDataset(Dataset):
                 f"samples across {len(grouped)} flights.",
                 flush=True,
             )
-            self.samples = balanced
+            final_3tuple = balanced
         else:
-            self.samples = all_samples
+            final_3tuple = all_samples
+
+        # Source up-weighting (report 14 — finetune-cookbook prerequisite).
+        # When ``sample_dir_weights`` is set, each sample is replicated by
+        # its source dir's weight. Designed for the post-competition-data
+        # finetune use case: cap a large pretrain pool at e.g. 150 per
+        # flight with ``per_flight_cap``, then 30× the small competition
+        # source via ``sample_dir_weights=[1, 30]``. Replication happens
+        # AFTER cap so the cap is honoured per flight before upweighting.
+        # weight=0 is allowed (and explicitly drops a source); weight=1 is
+        # a no-op (current behaviour).
+        if sample_dir_weights is not None:
+            replicated: list[tuple[str, str, int]] = []
+            for s in final_3tuple:
+                w = sample_dir_weights[s[2]]
+                if w > 0:
+                    replicated.extend([s] * w)
+            print(
+                f"  [GateDataset] sample_dir_weights={list(sample_dir_weights)}: "
+                f"{len(final_3tuple)} -> {len(replicated)} samples after "
+                f"per-source replication.",
+                flush=True,
+            )
+            final_3tuple = replicated
+
+        # Strip source_idx — downstream callers expect 2-tuples.
+        self.samples = [(s[0], s[1]) for s in final_3tuple]
 
         if use_sam_masks and skipped:
             print(
@@ -305,6 +354,7 @@ class GateDataset(Dataset):
                 if self.augment:
                     img, mask, corners_px, vis = train_augment_kp_multi(
                         img, mask, corners_px, vis,
+                        strong=self.augment_strong,
                     )
                 kp_target, vis_per_channel = render_heatmap_multi(
                     corners_px, vis,
@@ -320,6 +370,7 @@ class GateDataset(Dataset):
                 if self.augment:
                     img, mask, corners_px, vis = train_augment_kp(
                         img, mask, corners_px, vis,
+                        strong=self.augment_strong,
                     )
                 kp_target = render_heatmap(
                     corners_px, vis,
@@ -330,7 +381,7 @@ class GateDataset(Dataset):
                 kp_vis_t    = torch.from_numpy(vis.astype(np.int32))  # (K,)
         else:
             if self.augment:
-                img, mask = train_augment(img, mask)
+                img, mask = train_augment(img, mask, strong=self.augment_strong)
 
         # Train/inference parity: if imagenet_norm is on, apply the SAME
         # helper used by the predictor (single source of truth in

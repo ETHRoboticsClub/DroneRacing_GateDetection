@@ -52,6 +52,7 @@ def build_dataloaders(
     img_size: int = 384,
     batch_size: int = 16,
     augment: bool = True,
+    augment_strong: bool = False,
     use_sam_masks: bool = True,
     imagenet_norm: bool = False,
     keypoint_heatmap: bool = False,
@@ -60,22 +61,35 @@ def build_dataloaders(
     multi_gate_target: bool = False,
     per_flight_cap: int | None = None,
     cap_seed: int = 42,
+    sample_dir_weights: list[int] | None = None,
+    extra_train_dirs: list[str] | None = None,
     num_workers_train: int = 12,
     num_workers_val: int = 12,
     prefetch_factor: int = 4,
 ) -> tuple[DataLoader, DataLoader, GateDataset, GateDataset]:
-    """Build train+val loaders from ``<data_root>/{train,val}``."""
+    """Build train+val loaders from ``<data_root>/{train,val}``.
+
+    Extra train directories (``extra_train_dirs``) are appended after the
+    default ``<data_root>/train``; pair with ``sample_dir_weights`` to
+    upweight a small held-out source (e.g. competition data) without
+    losing TII pool regularisation. ``augment_strong`` toggles the
+    photometric / cutout / perspective / JPEG block in ``transforms.py``.
+    """
     data_root = Path(data_root)
 
-    train_dirs = [str(data_root / "train")]
+    train_dirs: list[str] = [str(data_root / "train")]
+    if extra_train_dirs:
+        train_dirs.extend(extra_train_dirs)
     val_dirs   = [str(data_root / "val")]
 
     train_ds = GateDataset(
         train_dirs, img_size=img_size, augment=augment,
+        augment_strong=augment_strong,
         use_sam_masks=use_sam_masks, imagenet_norm=imagenet_norm,
         keypoint_heatmap=keypoint_heatmap, heatmap_sigma=heatmap_sigma,
         n_keypoints=n_keypoints, multi_gate_target=multi_gate_target,
         per_flight_cap=per_flight_cap, cap_seed=cap_seed,
+        sample_dir_weights=sample_dir_weights,
     )
     # Val pool is NOT class-balanced — we want to measure generalisation
     # on whatever the val split contains, not a sub-sampled version.
@@ -325,6 +339,7 @@ def train(
     batch_size: int = 16,
     base_lr: float = 1e-3,
     augment: bool = True,
+    augment_strong: bool = False,
     img_size: int = 384,
     model_name: str = "gatenet",
     width_factor: int = 4,
@@ -360,6 +375,10 @@ def train(
     multi_gate_target: bool = False,
     per_flight_cap: int | None = None,
     cap_seed: int = 42,
+    sample_dir_weights: list[int] | None = None,
+    extra_train_dirs: list[str] | None = None,
+    init_from: str | None = None,
+    freeze_encoder: bool = False,
     seed: int = 42,
     data_root: str | os.PathLike | None = None,
     checkpoint_dir: str | os.PathLike = CHECKPOINTS_ROOT,
@@ -444,6 +463,61 @@ def train(
     train_ds_weights = tuple(model.ds_weights)
     if model_name.lower() == "gatenet":
         train_ds_weights = tuple(float(w) for w in deep_supervision_weights)
+
+    # Finetune cookbook (report 14): when ``init_from`` is set we load a
+    # previously-saved checkpoint's state_dict into the freshly-built
+    # model BEFORE channels_last / compile / optimizer construction.
+    # Loading before compile avoids the ``_orig_mod.`` prefix mismatch.
+    # ``strict=False`` lets us tolerate small head-shape changes (e.g.
+    # toggling keypoint_head) but logs missing/unexpected keys per
+    # CLAUDE.md §6 so any silent mismatch is visible.
+    if init_from is not None:
+        ckpt = torch.load(init_from, map_location=device, weights_only=True)
+        state = ckpt.get("model", ckpt)
+        # Strip _orig_mod. prefix if present (the source checkpoint was
+        # saved from a torch.compile-wrapped model — _save_state_dict in
+        # this same file already strips it, but tolerate it here too).
+        state = {k.replace("_orig_mod.", "", 1): v for k, v in state.items()}
+        missing, unexpected = model.load_state_dict(state, strict=False)
+        print(
+            f"Init : loaded weights from {init_from} "
+            f"(missing={len(missing)}, unexpected={len(unexpected)} keys)",
+            flush=True,
+        )
+        if missing or unexpected:
+            print(
+                f"[WARN] init_from: {len(missing)} missing + "
+                f"{len(unexpected)} unexpected keys. First few — "
+                f"missing={missing[:3]} unexpected={unexpected[:3]}",
+                flush=True,
+            )
+
+    # Optional: freeze the encoder so only the decoder + keypoint head
+    # update during a small-data finetune. Matches the standard transfer-
+    # learning recipe (Kornblith et al. 2019, arXiv:1805.08974, §3). Must
+    # happen BEFORE the optimizer is created so frozen params are excluded
+    # from the parameter group.
+    if freeze_encoder:
+        n_frozen = 0
+        n_total = 0
+        for name, p in model.named_parameters():
+            n_total += 1
+            if "encoder" in name:
+                p.requires_grad = False
+                n_frozen += 1
+        if n_frozen == 0:
+            print(
+                f"[WARN] freeze_encoder=True but no parameter name contained "
+                f"'encoder'; nothing was frozen. Model: {model_name}.",
+                flush=True,
+            )
+        else:
+            print(
+                f"Freeze: {n_frozen}/{n_total} params frozen (substring match: "
+                f"'encoder').",
+                flush=True,
+            )
+
     # channels_last is a no-op for non-conv ops but ~30% faster for conv
     # nets on Ampere+ when paired with AMP. Both model AND inputs must be
     # in channels_last (see train_epoch / validate).
@@ -462,6 +536,7 @@ def train(
         img_size=img_size,
         batch_size=batch_size,
         augment=augment,
+        augment_strong=augment_strong,
         use_sam_masks=use_sam_masks,
         imagenet_norm=imagenet_norm,
         keypoint_heatmap=keypoint_head,
@@ -470,6 +545,8 @@ def train(
         multi_gate_target=multi_gate_target,
         per_flight_cap=per_flight_cap,
         cap_seed=cap_seed,
+        sample_dir_weights=sample_dir_weights,
+        extra_train_dirs=extra_train_dirs,
         num_workers_train=num_workers_train,
         num_workers_val=num_workers_val,
         prefetch_factor=prefetch_factor,
@@ -491,11 +568,16 @@ def train(
     )
 
     opt_name = optimizer_name.lower()
+    # When freeze_encoder is set, only trainable parameters go to the
+    # optimizer — avoids spurious updates on frozen tensors and matches
+    # the standard transfer-learning recipe. Falls back to all params
+    # in the common (no-freeze) case.
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
     if opt_name == "adamw":
-        optimizer = torch.optim.AdamW(model.parameters(), lr=base_lr, weight_decay=weight_decay)
+        optimizer = torch.optim.AdamW(trainable_params, lr=base_lr, weight_decay=weight_decay)
     elif opt_name == "sgd":
         optimizer = torch.optim.SGD(
-            model.parameters(),
+            trainable_params,
             lr=base_lr,
             momentum=sgd_momentum,
             weight_decay=weight_decay,
@@ -618,6 +700,13 @@ def train(
                         "multi_gate_target": multi_gate_target,
                         "per_flight_cap": per_flight_cap,
                         "cap_seed": cap_seed,
+                        "augment_strong": augment_strong,
+                        "sample_dir_weights": (
+                            list(sample_dir_weights) if sample_dir_weights is not None else None
+                        ),
+                        "extra_train_dirs": list(extra_train_dirs) if extra_train_dirs else None,
+                        "init_from": init_from,
+                        "freeze_encoder": freeze_encoder,
                     },
                     "seed": seed,
                     "optimizer": optimizer.state_dict(),
@@ -655,6 +744,13 @@ def train(
                 "multi_gate_target": multi_gate_target,
                 "per_flight_cap": per_flight_cap,
                 "cap_seed": cap_seed,
+                "augment_strong": augment_strong,
+                "sample_dir_weights": (
+                    list(sample_dir_weights) if sample_dir_weights is not None else None
+                ),
+                "extra_train_dirs": list(extra_train_dirs) if extra_train_dirs else None,
+                "init_from": init_from,
+                "freeze_encoder": freeze_encoder,
             },
             "seed": seed,
             "val_loss": best_val_loss,
