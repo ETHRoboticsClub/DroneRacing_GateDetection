@@ -30,6 +30,15 @@ class ModelConfig:
     # loadable unchanged.
     keypoint_head: bool = False
     n_keypoints: int = 4
+    # Next-gate-mask head (report 15). When True the model produces a
+    # third output: a (B, 1, H, W) sigmoid mask covering ONLY the next
+    # gate (the one in front of the drone in 3D, derived from Vicon at
+    # training time). At inference the mask gates which corner peaks
+    # the runtime tracker considers — directly fixing the "wrong gate
+    # picked" failure mode that all keypoint-only trackers had on
+    # multi-gate scenes (see docs/report/14_generalization_prep). Same
+    # backwards-compat rule: default False.
+    next_gate_head: bool = False
 
 
 class SegmentationModelWrapper(nn.Module):
@@ -64,14 +73,29 @@ class SegmentationModelWrapper(nn.Module):
 
     def forward_multi(
         self, x: torch.Tensor
-    ) -> tuple[tuple[torch.Tensor, ...], torch.Tensor | None]:
-        """Multi-task forward: returns ``(seg_tuple, keypoint_tensor_or_None)``.
+    ) -> tuple[
+        tuple[torch.Tensor, ...], torch.Tensor | None, torch.Tensor | None
+    ]:
+        """Multi-task forward: returns
+        ``(seg_tuple, keypoint_tensor_or_None, next_gate_tensor_or_None)``.
 
         ``keypoint_tensor`` is ``None`` for backbones without a keypoint
         head; callers should branch on that and skip the keypoint loss /
         decode rather than special-case the model class.
+
+        ``next_gate_tensor`` is ``None`` for backbones without the
+        next-gate-mask head (report 15). When present it is a
+        ``(B, 1, H, W)`` sigmoid mask covering only the next gate.
+        Existing pre-report-15 callers can ignore the third element;
+        Python tuple unpacking will surface the extra return value
+        cleanly via ``seg, kp, *_ = forward_multi(x)`` if they want
+        to stay version-agnostic.
         """
         y = self.model(x)
         if isinstance(y, dict):
-            return self._to_seg_tuple(y["seg"]), y.get("keypoint")
-        return self._to_seg_tuple(y), None
+            return (
+                self._to_seg_tuple(y["seg"]),
+                y.get("keypoint"),
+                y.get("next_gate"),
+            )
+        return self._to_seg_tuple(y), None, None

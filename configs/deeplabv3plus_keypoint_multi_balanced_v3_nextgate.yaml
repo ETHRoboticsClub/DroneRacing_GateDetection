@@ -1,0 +1,86 @@
+# Report 15 — finetune-from-v2 with the next-gate-mask head added.
+# Trains on TII piloted SAM crops + uses each crop's parent flight CSV
+# for Vicon-derived next-gate labels (on-the-fly per sample).
+#
+# Deltas vs deeplabv3plus_keypoint_multi_balanced_v2.yaml:
+#   * model.next_gate_head:  true                  ← NEW head
+#   * loss.next_gate_weight: 1.0                   ← NEW loss term
+#   * data.next_gate_ring_thickness_px: 6          ← ring renderer
+#   * train.init_from: best_deeplabv3plus_keypoint_multi_balanced_v2.pth
+#   * train.freeze_encoder: true                   ← only decoder + heads train
+#   * train.epochs: 20                             ← finetune, not from scratch
+#   * train.lr: 1.0e-4                             ← 1/3 of v2's 3e-4
+#
+# Use: python scripts/train.py --config configs/deeplabv3plus_keypoint_multi_balanced_v3_nextgate.yaml
+
+data:
+  img_size: 384
+  sam_subdir: sam_masked
+  use_sam_masks: true
+  imagenet_norm: true
+  augment_strong: true
+  heatmap_sigma: 3.0
+  multi_gate_target: true
+  per_flight_cap: 150
+  cap_seed: 42
+  next_gate_ring_thickness_px: 6
+  next_gate_only_kp: true    # ← report 15.4: kp head trained only on the
+                              #    Vicon-derived next gate, not all visible
+                              #    gates. Fixes the hybrid tracker's kp-conf
+                              #    bottleneck (peaks inside chosen seg CC
+                              #    were below 0.30 threshold under v2's
+                              #    multi-gate kp supervision).
+
+model:
+  name: deeplabv3plus
+  width_factor: 4
+  encoder_weights: imagenet
+  dropout_p: 0.1
+  keypoint_head: true
+  n_keypoints: 4
+  next_gate_head: true       # ← report 15 head
+
+loss:
+  deep_supervision_weights: [1]
+  bce_weight: 2.0
+  keypoint_weight: 100.0
+  keypoint_fg_weight: 10.0
+  next_gate_weight: 2.0      # ← Dice+BCE on the next-gate-mask head
+                             #    (v3.2: bumped from 1.0 after v3.1's
+                             #    head collapsed to near-zero magnitudes)
+
+train:
+  epochs: 20
+  batch_size: 8
+  lr: 1.0e-4
+  optimizer: adamw
+  sgd_momentum: 0.9
+  weight_decay: 1.0e-4
+  seed: 42
+  num_workers_train: 16
+  num_workers_val: 16
+  scheduler:
+    type: polynomial_hf
+    warmup_ratio: 0.05
+    power: 0.9
+    lr_end: 1.0e-6
+  performance:
+    compile: true
+    compile_mode: max-autotune
+    amp: true
+    amp_dtype: bf16
+    channels_last: true
+    cudnn_benchmark: false
+    matmul_precision: high
+    prefetch_factor: 4
+  checkpoint_name: best_deeplabv3plus_keypoint_multi_balanced_v3_nextgate.pth
+  init_from: checkpoints/best_deeplabv3plus_keypoint_multi_balanced_v2.pth
+  freeze_encoder: true
+
+eval:
+  threshold: 0.5
+
+postprocess:
+  max_dist: 100.0
+  ransac_threshold: 5.0
+  max_translation: 150.0

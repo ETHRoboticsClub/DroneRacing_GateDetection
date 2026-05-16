@@ -65,13 +65,15 @@ def _load_model_config(
     dropout_p: float,
     keypoint_head: bool,
     n_keypoints: int,
+    next_gate_head: bool = False,
 ) -> ModelConfig:
     """Resolve model config from checkpoint first, then explicit args.
 
     The saved ``model_config`` is authoritative — every architectural field
     that affects the state-dict layout (including ``dropout_p``, which gates
     the dropout-wrapped segmentation head, and ``keypoint_head`` /
-    ``n_keypoints``, which add the multi-task head) must round-trip from it.
+    ``n_keypoints`` / ``next_gate_head``, which add extra heads) must
+    round-trip from it.
     """
     saved = ckpt.get("model_config", {}) if isinstance(ckpt, dict) else {}
     return ModelConfig(
@@ -82,6 +84,7 @@ def _load_model_config(
         dropout_p=float(saved.get("dropout_p", dropout_p)),
         keypoint_head=bool(saved.get("keypoint_head", keypoint_head)),
         n_keypoints=int(saved.get("n_keypoints", n_keypoints)),
+        next_gate_head=bool(saved.get("next_gate_head", next_gate_head)),
     )
 
 
@@ -95,6 +98,7 @@ def load_checkpoint(
     dropout_p: float = 0.0,
     keypoint_head: bool = False,
     n_keypoints: int = 4,
+    next_gate_head: bool = False,
     device: str | None = None,
 ) -> tuple[SegmentationModelWrapper, dict]:
     """Load a segmentation checkpoint. Returns ``(model.eval(), checkpoint_dict)``."""
@@ -120,6 +124,7 @@ def load_checkpoint(
         dropout_p=dropout_p,
         keypoint_head=keypoint_head,
         n_keypoints=n_keypoints,
+        next_gate_head=next_gate_head,
     )
     model = build_model(model_cfg).to(device)
 
@@ -133,6 +138,7 @@ def load_checkpoint(
         "dropout_p": model_cfg.dropout_p,
         "keypoint_head": model_cfg.keypoint_head,
         "n_keypoints": model_cfg.n_keypoints,
+        "next_gate_head": model_cfg.next_gate_head,
     })
     _load_state_dict_flexible(model, state_dict)
     model.eval()
@@ -190,6 +196,12 @@ class GatePredictor:
         mcfg = self.checkpoint_meta.get("model_config", {}) or {}
         self.has_keypoint_head: bool = bool(mcfg.get("keypoint_head", keypoint_head))
         self.n_keypoints: int = int(mcfg.get("n_keypoints", n_keypoints))
+        # Next-gate-mask head (report 15). False for any pre-report-15
+        # checkpoint (the legacy v2 ckpt and earlier) — those models'
+        # forward returns ng_pred=None and the predictor's
+        # ``predict_full`` method surfaces None for the ng_mask field
+        # so downstream trackers can branch cleanly.
+        self.has_next_gate_head: bool = bool(mcfg.get("next_gate_head", False))
 
     @torch.no_grad()
     def predict_image(self, img_path: str | os.PathLike) -> tuple[np.ndarray, np.ndarray]:
@@ -234,7 +246,7 @@ class GatePredictor:
             seg = self._predict_tensor(img_t).squeeze().cpu().numpy()
             return img_rgb, seg, None, None
 
-        seg_tuple, kp_pred = self.model.forward_multi(img_t)
+        seg_tuple, kp_pred, _ng_pred = self.model.forward_multi(img_t)
         seg = seg_tuple[-1].squeeze().cpu().numpy()
         kp_pred_np = kp_pred.detach().float().cpu().numpy()[0]   # (K, H, W)
         # Decode strategy depends on training target:
@@ -264,6 +276,76 @@ class GatePredictor:
             kp_xy = soft_argmax_2d(kp_pred.float()).squeeze(0).cpu().numpy()
         kp_conf = heatmap_peak_confidence(kp_pred.float()).squeeze(0).cpu().numpy()
         return img_rgb, seg, kp_xy, kp_conf
+
+    @torch.no_grad()
+    def predict_keypoint_heatmap(
+        self,
+        img_path: str | os.PathLike,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+        """Return the RAW keypoint heatmap instead of a decoded quad.
+
+        Returns ``(rgb_uint8, seg_prob, kp_heatmap_or_None)``. The
+        heatmap is ``(K, H, W)`` float32 (post-sigmoid, same scale as
+        the per-channel confidence ``heatmap_peak_confidence`` reads).
+
+        Used by :class:`GateTracker` (report 14, Path B) — the tracker
+        applies its own decode policy, so the predictor must not
+        pre-decode here.
+        """
+        img_bgr = cv2.imread(str(img_path))
+        if img_bgr is None:
+            raise FileNotFoundError(f"Cannot read image: {img_path}")
+        return self.predict_keypoint_heatmap_from_bgr(img_bgr)
+
+    @torch.no_grad()
+    def predict_full(
+        self,
+        img_path: str | os.PathLike,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None]:
+        """Return ``(rgb_uint8, seg_prob, kp_heatmap_or_None, ng_mask_or_None)``.
+
+        Sibling of :meth:`predict_keypoint_heatmap` that ALSO returns the
+        next-gate-mask head's output when present. For backwards
+        compatibility ``predict_keypoint_heatmap`` keeps its 3-tuple
+        return; new callers (NextGateMaskTracker, report 15 renderer)
+        use this method.
+        """
+        img_bgr = cv2.imread(str(img_path))
+        if img_bgr is None:
+            raise FileNotFoundError(f"Cannot read image: {img_path}")
+        img_t, img_rgb = self._preprocess_bgr(img_bgr)
+        if not self.has_keypoint_head:
+            seg = self._predict_tensor(img_t).squeeze().cpu().numpy()
+            return img_rgb, seg, None, None
+        seg_tuple, kp_pred, ng_pred = self.model.forward_multi(img_t)
+        seg = seg_tuple[-1].squeeze().cpu().numpy()
+        kp_pred_np = kp_pred.detach().float().cpu().numpy()[0]
+        ng_pred_np: np.ndarray | None = None
+        if ng_pred is not None:
+            # (B=1, 1, H, W) -> (H, W)
+            ng_pred_np = ng_pred.detach().float().cpu().numpy()[0, 0]
+        return img_rgb, seg, kp_pred_np, ng_pred_np
+
+    @torch.no_grad()
+    def predict_keypoint_heatmap_from_bgr(
+        self,
+        img_bgr: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+        """In-memory variant of :meth:`predict_keypoint_heatmap`.
+
+        Takes a BGR numpy array at any resolution; resizes inside via
+        the same preprocessing as :meth:`predict_keypoints`. Used by
+        Path A (adaptive cropping, report 14) where the crop is built
+        in-memory and we want to avoid a temp-file round-trip.
+        """
+        img_t, img_rgb = self._preprocess_bgr(img_bgr)
+        if not self.has_keypoint_head:
+            seg = self._predict_tensor(img_t).squeeze().cpu().numpy()
+            return img_rgb, seg, None
+        seg_tuple, kp_pred, _ng_pred = self.model.forward_multi(img_t)
+        seg = seg_tuple[-1].squeeze().cpu().numpy()
+        kp_pred_np = kp_pred.detach().float().cpu().numpy()[0]
+        return img_rgb, seg, kp_pred_np
 
     @torch.no_grad()
     def _predict_tensor(self, img_t: torch.Tensor) -> torch.Tensor:

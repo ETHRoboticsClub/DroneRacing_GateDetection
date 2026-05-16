@@ -177,6 +177,11 @@ class GateDataset(Dataset):
         per_flight_cap: int | None = None,
         cap_seed: int = 42,
         sample_dir_weights: list[int] | None = None,
+        next_gate_target: bool = False,
+        next_gate_ring_thickness_px: int = 6,
+        next_gate_csv_root: str | None = None,
+        next_gate_calib_dir: str | None = None,
+        next_gate_only_kp: bool = False,
     ):
         self.img_size = img_size
         self.augment = augment
@@ -190,6 +195,41 @@ class GateDataset(Dataset):
         self.per_flight_cap = per_flight_cap
         self.cap_seed = cap_seed
         self.sample_dir_weights = sample_dir_weights
+        # Next-gate-mask target (report 15). When enabled, __getitem__
+        # appends a (1, H, W) binary mask of ONLY the next gate (the one
+        # closest in front of the drone per Vicon) to the sample tuple,
+        # making it a 5-tuple. The mask is computed on-the-fly via
+        # ``data/next_gate_labels.py`` — each DataLoader worker caches
+        # CSV / calibration lookups per flight on first access.
+        self.next_gate_target = next_gate_target
+        self.next_gate_ring_thickness_px = next_gate_ring_thickness_px
+        # When True, the multi-gate kp target is REPLACED with peaks at
+        # only the Vicon-derived next gate's corners (report 15.4). The
+        # kp head learns to fire on a single gate of interest instead
+        # of all visible gates — fixes the hybrid tracker's bottleneck
+        # (kp peaks within the chosen seg CC's bbox were weak under
+        # the multi-gate-target supervision). Requires next_gate_target
+        # = True so the Vicon lookup chain is available (CSV root +
+        # calib dir). For samples without Vicon, the kp_vis is set to
+        # all-zero so the kp loss is masked on those samples (same
+        # pattern as ng_valid for the next-gate-mask head).
+        self.next_gate_only_kp = next_gate_only_kp
+        if next_gate_only_kp and not next_gate_target:
+            raise ValueError(
+                "next_gate_only_kp=True requires next_gate_target=True "
+                "(the Vicon lookup chain is shared between the two — "
+                "see data/next_gate_labels.py:find_next_gate_label_index)."
+            )
+        # Default roots — match the layout described in CLAUDE.md.
+        if next_gate_target:
+            from gate_detection.paths import DATA_ROOT  # lazy import to avoid cycles
+            self.next_gate_csv_root = next_gate_csv_root or str(DATA_ROOT)
+            self.next_gate_calib_dir = next_gate_calib_dir or "calibration"
+        else:
+            self.next_gate_csv_root = None
+            self.next_gate_calib_dir = None
+        # Per-worker warn counter (mutable list, see next_gate_labels._warn).
+        self._next_gate_warn_counter: list[int] = [0]
         if multi_gate_target and not keypoint_heatmap:
             # CLAUDE.md §6: surface the inconsistency loudly. The flag
             # has no meaning without keypoint_heatmap=True.
@@ -351,6 +391,42 @@ class GateDataset(Dataset):
                 corners_px, vis = _all_gates_inner(
                     lbl_path, self.img_size, self.n_keypoints,
                 )
+                # Report 15.4 — single-gate-of-interest supervision for
+                # the keypoint head. Use the same Vicon-derived next-
+                # gate lookup we already do for the next-gate-mask
+                # target. Filter corners_px/vis to keep ONLY that gate's
+                # corners; the kp head then trains to fire on the next
+                # gate only, not at every visible gate's corners (which
+                # was the v2 trained behaviour and the bottleneck for
+                # the hybrid tracker's coverage).
+                if self.next_gate_only_kp:
+                    from gate_detection.data.labels import parse_gates
+                    from gate_detection.data.next_gate_labels import (
+                        find_next_gate_label_index,
+                    )
+                    label_gates_now = parse_gates(lbl_path) if os.path.exists(lbl_path) else []
+                    ng_idx = find_next_gate_label_index(
+                        os.path.basename(img_path),
+                        label_gates_now,
+                        img_size=self.img_size,
+                        csv_root=self.next_gate_csv_root,
+                        calib_dir=self.next_gate_calib_dir,
+                        warn_counter=self._next_gate_warn_counter,
+                    )
+                    if ng_idx is not None and ng_idx < corners_px.shape[0]:
+                        corners_px = corners_px[ng_idx:ng_idx + 1]
+                        vis = vis[ng_idx:ng_idx + 1]
+                    else:
+                        # No Vicon next-gate available — mask the kp
+                        # loss for this sample by setting all
+                        # visibility flags to 0. Same per-sample mask
+                        # pattern as ng_valid for the next-gate-mask
+                        # head (reviewer round-1 Item H).
+                        corners_px = corners_px[:1] if corners_px.shape[0] > 0 else \
+                            np.zeros((1, self.n_keypoints, 2), dtype=np.float32)
+                        vis = np.zeros(
+                            (1, self.n_keypoints), dtype=np.int32,
+                        )
                 if self.augment:
                     img, mask, corners_px, vis = train_augment_kp_multi(
                         img, mask, corners_px, vis,
@@ -393,6 +469,48 @@ class GateDataset(Dataset):
             img_t = torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
         mask_t = torch.from_numpy(mask).unsqueeze(0).float()
 
+        # Next-gate-mask target (report 15). Generated AFTER augmentation
+        # because we re-render at original-image coordinates from the
+        # label file's normalized corners; the seg mask was warped in
+        # `train_augment` but the labels themselves are unchanged here.
+        # NOTE: this means the next-gate mask is NOT spatially-augmented
+        # in this version — a known limitation; if the strong-aug
+        # geometric transforms (perspective, affine) prove important
+        # we'd need to re-apply them to this mask too. Documented for
+        # the next reviewer.
+        ng_mask_t = None
+        ng_valid_t = None
+        if self.next_gate_target:
+            from gate_detection.data.labels import parse_gates
+            from gate_detection.data.next_gate_labels import render_next_gate_mask
+            # Determine the label path for THIS sample. In SAM mode the
+            # secondary_path stores the mask PNG; the label is at
+            # `<stem>.txt` next to the image.
+            lbl_path = (
+                secondary_path
+                if secondary_path.endswith(".txt")
+                else _label_path_for(img_path)
+            )
+            label_gates = parse_gates(lbl_path) if os.path.exists(lbl_path) else []
+            ng_mask, ng_valid = render_next_gate_mask(
+                os.path.basename(img_path),
+                label_gates,
+                img_size=self.img_size,
+                csv_root=self.next_gate_csv_root,
+                calib_dir=self.next_gate_calib_dir,
+                ring_thickness_px=self.next_gate_ring_thickness_px,
+                warn_counter=self._next_gate_warn_counter,
+            )
+            ng_mask_t = torch.from_numpy(ng_mask).unsqueeze(0).float()  # (1, H, W)
+            # ng_valid is a 0/1 scalar saying "the trainer should apply
+            # BCE on this sample" — fixes the zero-mask-training bug
+            # reviewer-round-1 Item H caught (autonomous-flight samples
+            # without Vicon would otherwise drag the head toward
+            # all-zero predictions even when a gate IS visible).
+            ng_valid_t = torch.tensor(float(ng_valid), dtype=torch.float32)
+
         if self.keypoint_heatmap:
+            if ng_mask_t is not None:
+                return img_t, mask_t, kp_target_t, kp_vis_t, ng_mask_t, ng_valid_t
             return img_t, mask_t, kp_target_t, kp_vis_t
         return img_t, mask_t

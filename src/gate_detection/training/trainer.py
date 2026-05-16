@@ -63,18 +63,14 @@ def build_dataloaders(
     cap_seed: int = 42,
     sample_dir_weights: list[int] | None = None,
     extra_train_dirs: list[str] | None = None,
+    next_gate_target: bool = False,
+    next_gate_ring_thickness_px: int = 6,
+    next_gate_only_kp: bool = False,
     num_workers_train: int = 12,
     num_workers_val: int = 12,
     prefetch_factor: int = 4,
 ) -> tuple[DataLoader, DataLoader, GateDataset, GateDataset]:
-    """Build train+val loaders from ``<data_root>/{train,val}``.
-
-    Extra train directories (``extra_train_dirs``) are appended after the
-    default ``<data_root>/train``; pair with ``sample_dir_weights`` to
-    upweight a small held-out source (e.g. competition data) without
-    losing TII pool regularisation. ``augment_strong`` toggles the
-    photometric / cutout / perspective / JPEG block in ``transforms.py``.
-    """
+    """Build train+val loaders from ``<data_root>/{train,val}``."""
     data_root = Path(data_root)
 
     train_dirs: list[str] = [str(data_root / "train")]
@@ -90,6 +86,9 @@ def build_dataloaders(
         n_keypoints=n_keypoints, multi_gate_target=multi_gate_target,
         per_flight_cap=per_flight_cap, cap_seed=cap_seed,
         sample_dir_weights=sample_dir_weights,
+        next_gate_target=next_gate_target,
+        next_gate_ring_thickness_px=next_gate_ring_thickness_px,
+        next_gate_only_kp=next_gate_only_kp,
     )
     # Val pool is NOT class-balanced — we want to measure generalisation
     # on whatever the val split contains, not a sub-sampled version.
@@ -99,6 +98,9 @@ def build_dataloaders(
         keypoint_heatmap=keypoint_heatmap, heatmap_sigma=heatmap_sigma,
         n_keypoints=n_keypoints, multi_gate_target=multi_gate_target,
         per_flight_cap=None,
+        next_gate_target=next_gate_target,
+        next_gate_ring_thickness_px=next_gate_ring_thickness_px,
+        next_gate_only_kp=next_gate_only_kp,
     )
 
     # persistent_workers avoids re-spawning the worker pool every epoch
@@ -141,15 +143,17 @@ def train_epoch(
     channels_last: bool = False,
     keypoint_loss_weight: float = 0.0,
     keypoint_fg_weight: float = 10.0,
+    next_gate_loss_weight: float = 0.0,
     desc: str = "train",
-) -> tuple[float, float, float]:
+) -> tuple[float, float, float, float]:
     """One epoch of training.
 
-    When ``keypoint_loss_weight > 0`` the loader is expected to yield 4-tuples
-    ``(imgs, masks, kp_targets, kp_vis)`` and the combined loss
-    ``L_seg + keypoint_loss_weight × L_heatmap`` is back-propagated. The
-    third return value is the mean per-batch keypoint loss (0.0 in the
-    seg-only branch) so the caller can log both components.
+    When ``keypoint_loss_weight > 0`` the loader yields 4-tuples
+    ``(imgs, masks, kp_targets, kp_vis)`` or 5-tuples ``(..., next_gate_mask)``
+    if the dataset also produces a next-gate target (report 15). The combined
+    loss is ``L_seg + keypoint_loss_weight × L_heatmap +
+    next_gate_loss_weight × L_next_gate``. The 4 return values are
+    ``(loss, iou, mean_kp_loss, mean_ng_loss)``.
     """
     multi_task = keypoint_loss_weight > 0.0
     model.train()
@@ -158,13 +162,35 @@ def train_epoch(
     n_samples = 0
     iou_metric = BinaryJaccardIndex(threshold=iou_threshold).to(device)
     progress = tqdm(loader, desc=desc, leave=False)
+    total_ng_loss = 0.0
     for batch in progress:
+        # Batch unpacking: with the next-gate-mask head (report 15), the
+        # dataset yields a 5-tuple (imgs, masks, kp_targets, kp_vis,
+        # next_gate_mask). The next_gate_mask is shape (B, 1, H, W) or
+        # an all-zero placeholder when the dataset has no Vicon for the
+        # sample. Pre-report-15 datasets still yield 4-tuples; we detect
+        # by tuple length.
         if multi_task:
-            imgs, masks, kp_targets, kp_vis = batch
+            if len(batch) == 6:
+                imgs, masks, kp_targets, kp_vis, ng_target, ng_valid = batch
+                ng_target = ng_target.to(device, non_blocking=True)
+                ng_valid = ng_valid.to(device, non_blocking=True)
+            elif len(batch) == 5:
+                # Legacy 5-tuple (mask-only, no ng_valid flag) — treat
+                # all samples as valid.
+                imgs, masks, kp_targets, kp_vis, ng_target = batch
+                ng_target = ng_target.to(device, non_blocking=True)
+                ng_valid = torch.ones(imgs.size(0), device=device, dtype=torch.float32)
+            else:
+                imgs, masks, kp_targets, kp_vis = batch
+                ng_target = None
+                ng_valid = None
             kp_targets = kp_targets.to(device, non_blocking=True)
             kp_vis = kp_vis.to(device, non_blocking=True)
         else:
             imgs, masks = batch
+            ng_target = None
+            ng_valid = None
         imgs = imgs.to(device, non_blocking=True)
         masks = masks.to(device, non_blocking=True)
         if channels_last and imgs.ndim == 4:
@@ -172,7 +198,7 @@ def train_epoch(
         optimizer.zero_grad()
         with torch.autocast(device_type=device, dtype=amp_dtype, enabled=use_amp):
             if multi_task:
-                outputs, kp_pred = model.forward_multi(imgs)
+                outputs, kp_pred, ng_pred = model.forward_multi(imgs)
                 if kp_pred is None:
                     raise RuntimeError(
                         "keypoint_loss_weight > 0 but model has no keypoint "
@@ -191,13 +217,55 @@ def train_epoch(
                         kp_pred.float(), kp_targets.float(), kp_vis,
                         fg_weight=keypoint_fg_weight,
                     )
-                loss = seg_loss + keypoint_loss_weight * kp_loss
+                # Next-gate-mask loss (report 15). BCE on the model's
+                # (B, 1, H, W) sigmoid output vs the rendered next-gate
+                # ring mask. Loss is 0 when either side is absent — that
+                # path simply trains the kp + seg heads as before.
+                if ng_pred is not None and ng_target is not None:
+                    with torch.autocast(device_type=device, enabled=False):
+                        # Dice + BCE on the next-gate-mask (report 15.2,
+                        # Option 1.1). Class imbalance is severe: ~99 %
+                        # of pixels are background, ~1 % are the ring.
+                        # Unweighted BCE (v3.1) let the head collapse to
+                        # near-zero everywhere (max sigmoid ≈ 0.05-0.23
+                        # on piloted frames where the gate IS visible).
+                        # Dice naturally handles class imbalance — it's
+                        # the region-overlap metric, not per-pixel — and
+                        # is what the seg head already uses. We keep the
+                        # BCE term as a per-pixel calibration signal so
+                        # the head's positive predictions don't saturate
+                        # at ~0.5.
+                        pred_c = ng_pred.float().clamp(1e-6, 1 - 1e-6)
+                        tgt_f = ng_target.float()
+                        per_sample_bce = torch.nn.functional.binary_cross_entropy(
+                            pred_c, tgt_f, reduction="none",
+                        ).mean(dim=(1, 2, 3))  # (B,) mean over (C, H, W)
+                        inter = (pred_c * tgt_f).sum(dim=(1, 2, 3))
+                        p_sum = pred_c.sum(dim=(1, 2, 3))
+                        t_sum = tgt_f.sum(dim=(1, 2, 3))
+                        dice = (2 * inter + 1.0) / (p_sum + t_sum + 1.0)
+                        per_sample_dice = 1.0 - dice              # (B,)
+                        per_sample = per_sample_bce + per_sample_dice
+                        valid_count = ng_valid.sum().clamp(min=1.0)
+                        # Mask out samples without Vicon (autonomous
+                        # flights, missing CSV rows, etc.) so they don't
+                        # drag the head toward "no gate" predictions on
+                        # legitimate-gate frames.
+                        ng_loss = (per_sample * ng_valid).sum() / valid_count
+                else:
+                    ng_loss = torch.tensor(0.0, device=device)
+                loss = (
+                    seg_loss
+                    + keypoint_loss_weight * kp_loss
+                    + next_gate_loss_weight * ng_loss
+                )
             else:
                 outputs = model(imgs)
                 loss = gate_loss(outputs, masks,
                                  deep_supervision_weights=deep_supervision_weights,
                                  bce_weight=bce_weight)
                 kp_loss = torch.tensor(0.0, device=device)
+                ng_loss = torch.tensor(0.0, device=device)
         # GradScaler is only meaningful for fp16 (small dynamic range);
         # for bf16 the caller passes scaler.is_enabled() == False and we
         # take the plain backward path.
@@ -227,6 +295,7 @@ def train_epoch(
         total_loss / max(n_samples, 1),
         float(iou_metric.compute()),
         total_kp_loss / max(n_samples, 1),
+        total_ng_loss / max(n_samples, 1),
     )
 
 
@@ -244,9 +313,10 @@ def validate(
     channels_last: bool = False,
     keypoint_loss_weight: float = 0.0,
     keypoint_fg_weight: float = 10.0,
+    next_gate_loss_weight: float = 0.0,
     soft_argmax_beta: float = 100.0,
     desc: str = "val",
-) -> tuple[float, float, float, float]:
+) -> tuple[float, float, float, float, float]:
     """One validation epoch.
 
     Returns ``(val_loss, val_iou, val_kp_loss, val_corner_dist)`` where
@@ -259,6 +329,7 @@ def validate(
     model.eval()
     total_loss = 0.0
     total_kp_loss = 0.0
+    total_ng_loss = 0.0
     total_corner_dist = 0.0
     n_visible_corners = 0
     n_samples = 0
@@ -266,18 +337,33 @@ def validate(
     progress = tqdm(loader, desc=desc, leave=False)
     for batch in progress:
         if multi_task:
-            imgs, masks, kp_targets, kp_vis = batch
+            if len(batch) == 6:
+                imgs, masks, kp_targets, kp_vis, ng_target, ng_valid = batch
+                ng_target = ng_target.to(device, non_blocking=True)
+                ng_valid = ng_valid.to(device, non_blocking=True)
+            elif len(batch) == 5:
+                # Legacy 5-tuple (mask-only, no ng_valid flag) — treat
+                # all samples as valid.
+                imgs, masks, kp_targets, kp_vis, ng_target = batch
+                ng_target = ng_target.to(device, non_blocking=True)
+                ng_valid = torch.ones(imgs.size(0), device=device, dtype=torch.float32)
+            else:
+                imgs, masks, kp_targets, kp_vis = batch
+                ng_target = None
+                ng_valid = None
             kp_targets = kp_targets.to(device, non_blocking=True)
             kp_vis = kp_vis.to(device, non_blocking=True)
         else:
             imgs, masks = batch
+            ng_target = None
+            ng_valid = None
         imgs = imgs.to(device, non_blocking=True)
         masks = masks.to(device, non_blocking=True)
         if channels_last and imgs.ndim == 4:
             imgs = imgs.contiguous(memory_format=torch.channels_last)
         with torch.autocast(device_type=device, dtype=amp_dtype, enabled=use_amp):
             if multi_task:
-                outputs, kp_pred = model.forward_multi(imgs)
+                outputs, kp_pred, ng_pred = model.forward_multi(imgs)
                 seg_loss = gate_loss(
                     outputs, masks,
                     deep_supervision_weights=deep_supervision_weights,
@@ -288,16 +374,55 @@ def validate(
                         kp_pred.float(), kp_targets.float(), kp_vis,
                         fg_weight=keypoint_fg_weight,
                     )
-                loss = seg_loss + keypoint_loss_weight * kp_loss
+                if ng_pred is not None and ng_target is not None:
+                    with torch.autocast(device_type=device, enabled=False):
+                        # Dice + BCE on the next-gate-mask (report 15.2,
+                        # Option 1.1). Class imbalance is severe: ~99 %
+                        # of pixels are background, ~1 % are the ring.
+                        # Unweighted BCE (v3.1) let the head collapse to
+                        # near-zero everywhere (max sigmoid ≈ 0.05-0.23
+                        # on piloted frames where the gate IS visible).
+                        # Dice naturally handles class imbalance — it's
+                        # the region-overlap metric, not per-pixel — and
+                        # is what the seg head already uses. We keep the
+                        # BCE term as a per-pixel calibration signal so
+                        # the head's positive predictions don't saturate
+                        # at ~0.5.
+                        pred_c = ng_pred.float().clamp(1e-6, 1 - 1e-6)
+                        tgt_f = ng_target.float()
+                        per_sample_bce = torch.nn.functional.binary_cross_entropy(
+                            pred_c, tgt_f, reduction="none",
+                        ).mean(dim=(1, 2, 3))  # (B,) mean over (C, H, W)
+                        inter = (pred_c * tgt_f).sum(dim=(1, 2, 3))
+                        p_sum = pred_c.sum(dim=(1, 2, 3))
+                        t_sum = tgt_f.sum(dim=(1, 2, 3))
+                        dice = (2 * inter + 1.0) / (p_sum + t_sum + 1.0)
+                        per_sample_dice = 1.0 - dice              # (B,)
+                        per_sample = per_sample_bce + per_sample_dice
+                        valid_count = ng_valid.sum().clamp(min=1.0)
+                        # Mask out samples without Vicon (autonomous
+                        # flights, missing CSV rows, etc.) so they don't
+                        # drag the head toward "no gate" predictions on
+                        # legitimate-gate frames.
+                        ng_loss = (per_sample * ng_valid).sum() / valid_count
+                else:
+                    ng_loss = torch.tensor(0.0, device=device)
+                loss = (
+                    seg_loss
+                    + keypoint_loss_weight * kp_loss
+                    + next_gate_loss_weight * ng_loss
+                )
             else:
                 outputs = model(imgs)
                 loss = gate_loss(outputs, masks,
                                  deep_supervision_weights=deep_supervision_weights,
                                  bce_weight=bce_weight)
                 kp_loss = torch.tensor(0.0, device=device)
+                ng_loss = torch.tensor(0.0, device=device)
                 kp_pred = None
         total_loss += loss.item() * imgs.size(0)
         total_kp_loss += float(kp_loss.item()) * imgs.size(0)
+        total_ng_loss += float(ng_loss.item()) * imgs.size(0)
         n_samples += imgs.size(0)
         pred_full = outputs[-1]
         iou_metric.update(pred_full, masks.to(torch.int64))
@@ -327,6 +452,7 @@ def validate(
         float(iou_metric.compute()),
         total_kp_loss / max(n_samples, 1),
         val_corner_dist,
+        total_ng_loss / max(n_samples, 1),
     )
 
 
@@ -371,6 +497,10 @@ def train(
     n_keypoints: int = 4,
     keypoint_loss_weight: float = 0.0,
     keypoint_fg_weight: float = 10.0,
+    next_gate_head: bool = False,
+    next_gate_loss_weight: float = 0.0,
+    next_gate_ring_thickness_px: int = 6,
+    next_gate_only_kp: bool = False,
     heatmap_sigma: float = 3.0,
     multi_gate_target: bool = False,
     per_flight_cap: int | None = None,
@@ -436,7 +566,23 @@ def train(
         dropout_p=dropout_p,
         keypoint_head=keypoint_head,
         n_keypoints=n_keypoints,
+        next_gate_head=next_gate_head,
     )
+    # CLAUDE.md §6 — make any next-gate misconfiguration fail loudly at
+    # config time rather than silently produce a model with the head but
+    # no loss signal (or vice versa).
+    if next_gate_head and next_gate_loss_weight <= 0.0:
+        raise ValueError(
+            "next_gate_head=True requires next_gate_loss_weight > 0 — "
+            "the head would receive zero gradient. Set "
+            "loss.next_gate_weight (typical 1.0) in the config."
+        )
+    if next_gate_loss_weight > 0.0 and not next_gate_head:
+        raise ValueError(
+            "next_gate_loss_weight > 0 requires model.next_gate_head=true. "
+            "Without the head, forward_multi returns ng_pred=None and the "
+            "trainer would silently NaN."
+        )
     # Both directions are inconsistent at the dataloader / forward boundary
     # (dataset emits 4-tuples iff keypoint_head; train_epoch unpacks 4-tuples
     # iff keypoint_loss_weight > 0). Fail fast at config-time with a clear
@@ -547,6 +693,9 @@ def train(
         cap_seed=cap_seed,
         sample_dir_weights=sample_dir_weights,
         extra_train_dirs=extra_train_dirs,
+        next_gate_target=next_gate_head,
+        next_gate_ring_thickness_px=next_gate_ring_thickness_px,
+        next_gate_only_kp=next_gate_only_kp,
         num_workers_train=num_workers_train,
         num_workers_val=num_workers_val,
         prefetch_factor=prefetch_factor,
@@ -558,6 +707,11 @@ def train(
             f"Multi-task: keypoint_head=True n_keypoints={n_keypoints} "
             f"loss_weight={keypoint_loss_weight} fg_weight={keypoint_fg_weight} "
             f"sigma_px={heatmap_sigma} multi_gate_target={multi_gate_target}"
+        )
+    if next_gate_head:
+        print(
+            f"Next-gate: head=True loss_weight={next_gate_loss_weight} "
+            f"ring_thickness_px={next_gate_ring_thickness_px}"
         )
 
     # GradScaler enabled ONLY for CUDA + fp16. bf16 has the same exponent
@@ -609,7 +763,7 @@ def train(
     best_state_dict: dict[str, torch.Tensor] | None = None
 
     for epoch in range(1, epochs + 1):
-        train_loss, train_iou, train_kp_loss = train_epoch(
+        train_loss, train_iou, train_kp_loss, train_ng_loss = train_epoch(
             model,
             train_loader,
             optimizer,
@@ -624,10 +778,11 @@ def train(
             channels_last=channels_last,
             keypoint_loss_weight=keypoint_loss_weight,
             keypoint_fg_weight=keypoint_fg_weight,
+            next_gate_loss_weight=next_gate_loss_weight,
             desc=f"Epoch {epoch:3d}/{epochs} [train]",
         )
 
-        val_loss, val_iou, val_kp_loss, val_corner_dist = validate(
+        val_loss, val_iou, val_kp_loss, val_corner_dist, val_ng_loss = validate(
             model,
             val_loader,
             device,
@@ -639,6 +794,7 @@ def train(
             channels_last=channels_last,
             keypoint_loss_weight=keypoint_loss_weight,
             keypoint_fg_weight=keypoint_fg_weight,
+            next_gate_loss_weight=next_gate_loss_weight,
             desc=f"Epoch {epoch:3d}/{epochs} [val]  ",
         )
 
@@ -653,12 +809,33 @@ def train(
                 f"  KP : train_kp_loss={train_kp_loss:.4f}  val_kp_loss={val_kp_loss:.4f}  "
                 f"val_corner_dist={val_corner_dist:.2f} px"
             )
+        if next_gate_loss_weight > 0.0:
+            print(
+                f"  NG : train_ng_loss={train_ng_loss:.4f}  "
+                f"val_ng_loss={val_ng_loss:.4f}"
+            )
 
         # Primary selection metric: validation IoU.
         # Tie-breaker: lower validation loss.
+        # NOTE (report 15): when the next-gate-mask head is active, the
+        # seg-IoU often plateaus immediately (the v2 init already has
+        # near-converged seg+kp) so val_iou selection grabs epoch 1
+        # where the ng head is still untrained. Override the selection
+        # to use val_loss directly when next_gate_loss_weight > 0 —
+        # val_loss includes the ng_loss term so it tracks ng-head
+        # convergence.
         # We snapshot to CPU to avoid holding a duplicate state-dict on GPU
         # for the whole run; the checkpoint is written once at the end.
-        if (val_iou > best_val_iou) or (val_iou == best_val_iou and val_loss < best_val_loss):
+        if next_gate_loss_weight > 0.0:
+            # Loss-based selection — captures ng-head training.
+            is_better = val_loss < best_val_loss
+        else:
+            # Original IoU-then-loss selection for backwards compat.
+            is_better = (
+                (val_iou > best_val_iou)
+                or (val_iou == best_val_iou and val_loss < best_val_loss)
+            )
+        if is_better:
             best_val_iou = val_iou
             best_val_loss = val_loss
             best_epoch = epoch
@@ -690,6 +867,7 @@ def train(
                         "dropout_p": model_cfg.dropout_p,
                         "keypoint_head": model_cfg.keypoint_head,
                         "n_keypoints": model_cfg.n_keypoints,
+                        "next_gate_head": model_cfg.next_gate_head,
                     },
                     # Data-preprocessing fields the predictor must replay
                     # at inference for parity. Kept separate from
@@ -737,6 +915,7 @@ def train(
                 "dropout_p": model_cfg.dropout_p,
                 "keypoint_head": model_cfg.keypoint_head,
                 "n_keypoints": model_cfg.n_keypoints,
+                "next_gate_head": model_cfg.next_gate_head,
             },
             "data_config": {
                 "imagenet_norm": imagenet_norm,

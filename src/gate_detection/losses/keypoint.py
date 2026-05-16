@@ -312,6 +312,65 @@ def _find_top_peaks_2d(channel: np.ndarray, n: int = 3, nms_radius: int = 30) ->
     return peaks
 
 
+def coherent_quad_candidates(
+    heatmap: np.ndarray, top_n: int = 3,
+) -> list[dict]:
+    """Return ALL spatially-ordered (TL,TR,BR,BL) corner combos from the
+    top-``top_n`` peaks per channel, each with its rectangularity score.
+
+    Used by the runtime gate-tracker (report 14 / Path B) when more than
+    one valid candidate is needed — the tracker picks by combining
+    proximity-to-previous-track with rectangularity, rather than purely
+    by rectangularity. ``coherent_quad_decode`` is a thin wrapper around
+    this that just keeps the minimum-score winner.
+
+    Each returned dict has keys:
+      * ``quad``     — (4, 2) float32 array, channel order TL/TR/BR/BL
+      * ``rect_score`` — ``|top_w-bot_w| + |left_h-right_h|`` (px)
+      * ``centroid`` — (2,) float32, mean of the four corners
+      * ``diagonal`` — average of the two diagonals (px), used as a
+        proxy for "how close is this gate" (large = close)
+
+    Sorted by ``rect_score`` ascending (most rectangular first). Empty
+    list when no spatially-ordered combo exists.
+    """
+    if heatmap.shape[0] != 4:
+        raise ValueError(
+            f"coherent_quad_candidates expects K=4 channels (TL, TR, BR, BL); "
+            f"got K={heatmap.shape[0]}"
+        )
+    peaks = [_find_top_peaks_2d(heatmap[k], n=top_n) for k in range(4)]
+    if any(len(p) == 0 for p in peaks):
+        return []
+    candidates: list[dict] = []
+    from itertools import product
+    for combo in product(*peaks):
+        TL, TR, BR, BL = combo
+        if not (TR[0] > TL[0] and BL[1] > TL[1]
+                and BR[0] > BL[0] and BR[1] > TR[1]):
+            continue
+        top_w   = TR[0] - TL[0]
+        bot_w   = BR[0] - BL[0]
+        left_h  = BL[1] - TL[1]
+        right_h = BR[1] - TR[1]
+        rect_score = abs(top_w - bot_w) + abs(left_h - right_h)
+        quad = np.array(combo, dtype=np.float32)
+        # Diagonal magnitude — proxy for gate size. Average of TL-BR and
+        # TR-BL diagonals so an extreme aspect ratio doesn't dominate.
+        diag = 0.5 * (
+            float(np.linalg.norm(quad[2] - quad[0])) +
+            float(np.linalg.norm(quad[3] - quad[1]))
+        )
+        candidates.append({
+            "quad": quad,
+            "rect_score": float(rect_score),
+            "centroid": quad.mean(axis=0).astype(np.float32),
+            "diagonal": diag,
+        })
+    candidates.sort(key=lambda c: c["rect_score"])
+    return candidates
+
+
 def coherent_quad_decode(heatmap: np.ndarray, top_n: int = 3) -> np.ndarray | None:
     """Pick a (K=4, 2) corner set whose 4 peaks all belong to the **same** gate.
 
@@ -340,34 +399,14 @@ def coherent_quad_decode(heatmap: np.ndarray, top_n: int = 3) -> np.ndarray | No
     spatially-ordered combination exists (e.g., heatmap has no clear
     peaks). Caller (predictor) should fall back appropriately.
     """
-    if heatmap.shape[0] != 4:
-        raise ValueError(
-            f"coherent_quad_decode expects K=4 channels (TL, TR, BR, BL); "
-            f"got K={heatmap.shape[0]}"
-        )
-    peaks = [_find_top_peaks_2d(heatmap[k], n=top_n) for k in range(4)]
-    if any(len(p) == 0 for p in peaks):
+    # Thin wrapper around ``coherent_quad_candidates``: the original
+    # "best by rectangularity" winner is the first element of the
+    # sorted candidate list. Keeping a single source of truth so the
+    # tracker (Path B) and the legacy decoder cannot drift apart.
+    cands = coherent_quad_candidates(heatmap, top_n=top_n)
+    if not cands:
         return None
-    best_score = float("inf")
-    best_quad: np.ndarray | None = None
-    from itertools import product
-    for combo in product(*peaks):
-        TL, TR, BR, BL = combo  # each = (x, y)
-        # Spatial-order constraints for a non-self-intersecting quad
-        # with TL/TR/BR/BL labels. Strict inequalities to reject
-        # degenerate (overlapping) corner picks.
-        if not (TR[0] > TL[0] and BL[1] > TL[1]
-                and BR[0] > BL[0] and BR[1] > TR[1]):
-            continue
-        top_w   = TR[0] - TL[0]
-        bot_w   = BR[0] - BL[0]
-        left_h  = BL[1] - TL[1]
-        right_h = BR[1] - TR[1]
-        score = abs(top_w - bot_w) + abs(left_h - right_h)
-        if score < best_score:
-            best_score = score
-            best_quad = np.array(combo, dtype=np.float32)
-    return best_quad
+    return cands[0]["quad"]
 
 
 def heatmap_peak_confidence(heatmap: torch.Tensor) -> torch.Tensor:

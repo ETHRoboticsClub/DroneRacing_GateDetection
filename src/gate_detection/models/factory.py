@@ -27,5 +27,6 @@ def build_model(cfg: ModelConfig) -> SegmentationModelWrapper:
             dropout_p=cfg.dropout_p,
             keypoint_head=cfg.keypoint_head,
             n_keypoints=cfg.n_keypoints,
+            next_gate_head=cfg.next_gate_head,
         )
     raise ValueError(f"Unknown model name: {cfg.name}")

@@ -363,6 +363,71 @@ def vicon_camera_pose(
     return rvec, tvec
 
 
+def project_next_gate_uv(
+    row,
+    K: np.ndarray,
+    R_cam_body: np.ndarray,
+    t_cam_body: np.ndarray,
+    *,
+    n_gates: int = 4,
+    label_center_2d: np.ndarray | None = None,
+) -> tuple[int, float, float] | None:
+    """Pick the next-gate id (closest projected to image centre or
+    ``label_center_2d``) AND return its projected image-plane
+    coordinates ``(u, v)``.
+
+    Sibling of :func:`vicon_gate_selection` — that one returns only the
+    gate_id and is used by ``benchmark_pnp.py``. This one returns the
+    (gate_id, u, v) tuple so the Path-A adaptive-crop pipeline (report
+    14) can crop a window around the predicted next-gate location.
+
+    Returns ``None`` when:
+      * the drone-pose columns are missing / NaN, OR
+      * the gate-position columns are missing / NaN, OR
+      * no gate has g_cam.z > 0 (every gate is behind the camera).
+
+    CLAUDE.md §0 reminder: this requires **ground-truth Vicon drone
+    pose**, which the flight stack does not have. The Path-A demo
+    using this function is therefore an OFFLINE proof-of-concept,
+    NOT a deployable runtime. For deployment, swap in VIO pose +
+    a pre-race gate map.
+    """
+    import pandas as pd
+
+    d_cols = ["drone_x", "drone_y", "drone_z"]
+    if not all(c in row.index for c in d_cols) or any(pd.isna(row[c]) for c in d_cols):
+        return None
+    d_pos = np.array([row[c] for c in d_cols], dtype=np.float64)
+
+    rot_cols = [f"drone_rot[{i}]" for i in range(9)]
+    if not all(c in row.index for c in rot_cols):
+        return None
+    R_w2b = np.array([row[c] for c in rot_cols], dtype=np.float64).reshape(3, 3)
+
+    cx = float(K[0, 2])
+    cy = float(K[1, 2])
+    ref = label_center_2d if label_center_2d is not None else np.array([cx, cy])
+
+    best_id, best_dist, best_uv = None, float("inf"), None
+    for gid in range(1, n_gates + 1):
+        g_cols = [f"gate{gid}_int_{ax}" for ax in ("x", "y", "z")]
+        if not all(c in row.index for c in g_cols) or any(pd.isna(row[c]) for c in g_cols):
+            continue
+        g_pos = np.array([row[c] for c in g_cols], dtype=np.float64)
+        g_body = R_w2b @ (g_pos - d_pos)
+        g_cam  = R_cam_body.T @ (g_body - t_cam_body)
+        if g_cam[2] <= 0:
+            continue
+        u = K[0, 0] * g_cam[0] / g_cam[2] + K[0, 2]
+        v = K[1, 1] * g_cam[1] / g_cam[2] + K[1, 2]
+        dist = float(np.hypot(u - ref[0], v - ref[1]))
+        if dist < best_dist:
+            best_dist, best_id, best_uv = dist, gid, (float(u), float(v))
+    if best_id is None or best_uv is None:
+        return None
+    return best_id, best_uv[0], best_uv[1]
+
+
 def vicon_gate_selection(
     row,
     K: np.ndarray,
