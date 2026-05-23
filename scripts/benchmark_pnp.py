@@ -40,6 +40,8 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import shutil
+from pathlib import Path
 
 # allow running directly without installing the package
 _SRC = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -330,7 +332,17 @@ def _process_frame(fname, cam_dir, lbl_dir, csv_df, predictor, K, dist,
         if row is not None and R_cam_body is not None and t_cam_body is not None:
             perm_3d = sort_markers_perm(pts_3d_raw, row, R_cam_body, t_cam_body, K, dist)
         if perm_3d is None:
-            perm_3d = perm_2d  # fallback (legacy behaviour)
+            # CLAUDE.md sec.5: announce the fallback. Applying the 2-D image-space
+            # perm to 3-D world points is correspondence-correct ONLY when the CSV
+            # marker numbering coincides with [TL,TR,BR,BL]; otherwise PnP corres-
+            # pondences mismatch and the reproj residual blows up (Report 42 #1).
+            _why = ("no Vicon row" if row is None
+                    else "no cam_T_body extrinsics" if (R_cam_body is None or t_cam_body is None)
+                    else "sort_markers_perm returned None")
+            print(f"[WARN] benchmark_pnp {fname}: vicon marker sort unavailable "
+                  f"({_why}); falling back to 2-D image-space perm (only valid "
+                  f"if CSV ordering is [TL,TR,BR,BL] for this gate)", flush=True)
+            perm_3d = perm_2d
         pts_3d_sorted = pts_3d_raw[perm_3d]
 
     # GT PnP
@@ -743,6 +755,12 @@ def main() -> None:
     args = p.parse_args()
 
     cfg = load_config(args.config)
+    # Snapshot the config beside the CSV so a run is reproducible from its
+    # artefact alone (CLAUDE.md §0 — no result that cannot be re-run).
+    _cfg_snap = Path(args.out).with_suffix("").as_posix() + ".config.yaml"
+    Path(_cfg_snap).parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(args.config, _cfg_snap)
+    print(f"Config snapshot     → {_cfg_snap}")
     predictor = GatePredictor(
         args.checkpoint,
         img_size=cfg["data"]["img_size"],

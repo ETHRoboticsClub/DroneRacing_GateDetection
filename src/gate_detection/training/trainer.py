@@ -553,9 +553,13 @@ def train(
     }
     resolved_amp_dtype = amp_dtype_map.get(amp_dtype.lower(), torch.bfloat16)
     use_amp = use_amp and device in {"cuda", "cpu"}
-    # CPU autocast only supports bf16; silently coerce so stray fp16 configs
-    # don't crash with an opaque "unsupported dtype" error.
+    # CPU autocast only supports bf16; coerce so stray fp16 configs don't
+    # crash with an opaque "unsupported dtype" error. CLAUDE.md sec.5: log
+    # the coercion so a future reader spots the silent dtype change.
     if device == "cpu" and resolved_amp_dtype != torch.bfloat16:
+        print(f"[WARN] trainer.train: device=cpu but requested amp_dtype="
+              f"{amp_dtype!r}; coercing to bf16 (CPU autocast does not "
+              f"support fp16)", flush=True)
         resolved_amp_dtype = torch.bfloat16
 
     model_cfg = ModelConfig(

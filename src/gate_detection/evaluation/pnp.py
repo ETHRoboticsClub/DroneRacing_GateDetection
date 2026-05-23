@@ -564,8 +564,10 @@ def solve_pnp_inner(
         rvec, tvec = cv2.solvePnPRefineLM(
             p3d, p2d, K_f, dist_f, rvec, tvec,
         )
-    except cv2.error:
-        pass  # refinement unavailable or diverged — keep initial result
+    except cv2.error as _e:
+        # CLAUDE.md sec.5: keep the initial RANSAC/SQPNP pose but say so.
+        print(f"[WARN] solve_pnp_inner: cv2.solvePnPRefineLM diverged ({_e}); "
+              f"keeping initial (pre-LM) pose", flush=True)
 
     # reprojection error in original distorted pixel space
     idx = inliers.flatten()

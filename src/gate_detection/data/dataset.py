@@ -25,6 +25,12 @@ MASK_SUFFIX = "_mask.png"
 def _load_sam_mask(mask_path: str, out_size: int) -> np.ndarray:
     m = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
     if m is None:
+        # CLAUDE.md sec.5: zero mask on missing PNG is a footgun (silently
+        # trains the model that this frame has no gate). GateDataset.__init__
+        # already filters samples lacking _mask.png, so hitting this means a
+        # future caller bypassed the filter — surface loudly.
+        print(f"[WARN] _load_sam_mask: missing PNG {mask_path!r}; returning "
+              f"zero mask of size {out_size}x{out_size}", flush=True)
         return np.zeros((out_size, out_size), dtype=np.uint8)
     if m.shape != (out_size, out_size):
         m = cv2.resize(m, (out_size, out_size), interpolation=cv2.INTER_NEAREST)
