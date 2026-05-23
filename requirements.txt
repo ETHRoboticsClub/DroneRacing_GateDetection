@@ -1,14 +1,21 @@
-numpy
-opencv-python
-torch
-torchvision
-kornia
-torchmetrics
-transformers
-segmentation-models-pytorch
-matplotlib
-pandas
-tqdm
-pyyaml
-datasets
-pillow
+# Pinned to the gate-detection conda env that trained v3.4. See
+# CLAUDE.md sec.6 — fast-moving 2024-2026 tooling needs exact pins.
+# torch + torchvision pinned to the +cu128 build because that is what
+# qolam uses; the Jetson deployment installs an NVIDIA-built torch
+# 2.5.0a0+nv24.08 wheel in a separate venv (see Report 43).
+# smp 0.5.0 is load-bearing: 0.3.x and 0.4.x use decoder(*features)
+# varargs and silently break the v3.4 wrapper (Report 43 surprise #1).
+numpy==2.4.3
+opencv-python==4.13.0.92
+torch==2.11.0
+torchvision==0.26.0
+kornia==0.8.2
+torchmetrics==1.9.0
+transformers==5.8.0
+segmentation-models-pytorch==0.5.0
+matplotlib==3.10.9
+pandas==3.0.2
+tqdm==4.67.3
+pyyaml==6.0.3
+datasets==4.8.5
+pillow==12.1.1
